@@ -101,6 +101,8 @@
     import { createHistoryStore } from './src/state/history.js';
     import { reducer, initialState as baseInitial } from './src/state/reducer.js';
     import { visibleSupply, visibleDemand, allCurves } from './src/state/selectors.js';
+    import { startRouter, onRoute, currentRoute } from './src/app/router.js';
+    startRouter();
 
     // --- helper to execute a brace plan from core/brace.js ---
     function executeBracePlan(ctx, plan) {
@@ -588,3 +590,4 @@
   </script>
 </body>
 </html>
+
