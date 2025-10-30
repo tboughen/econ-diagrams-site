@@ -37,10 +37,25 @@
     #canvas-area { flex:1; display:flex; flex-direction:column; margin:20px; gap:10px; }
     #canvas-container { display:flex; justify-content:center; align-items:center; }
     canvas { border:1px solid #ccc; }
+
+    /* tiny breathing room for the feature panel */
+    #feature-panel { display:block; padding-top:6px; }
+    #sidebar h2 + #feature-panel { margin-top:-10px; }
+    nav a { color:#fff; text-decoration:none; }
+    nav a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
-  <nav><h1>Microeconomics - Supply and Demand</h1></nav>
+  <nav>
+    <h1 style="display:inline;">Microeconomics - Supply and Demand</h1>
+    <!-- Quick nav links -->
+    <span style="margin-left:10px; font-size:14px;">
+      · <a href="#supply-demand">S&amp;D</a>
+      · <a href="#tax">Tax</a>
+      · <a href="#subsidy">Subsidy</a>
+      · <a href="#externalities">Externalities</a>
+    </span>
+  </nav>
 
   <div id="main-container">
     <div id="sidebar">
@@ -82,6 +97,10 @@
         <div id="toggleEquilibrium" class="curve-control-segment active">Equilibrium</div>
         <div id="toggleDisequilibrium" class="curve-control-segment">Disequilibrium</div>
       </div>
+
+      <!-- Feature slot lives INSIDE the sidebar -->
+      <h2>Feature</h2>
+      <div id="feature-panel"></div>
     </div>
 
     <div id="canvas-area">
@@ -92,17 +111,20 @@
   </div>
 
   <script type="module">
-    /* Core helpers (already created in Milestone A) */
+    import { getFeature } from './src/app/features.js';
+    import { startRouter, onRoute } from './src/app/router.js';
+
+    /* Core helpers */
     import { clamp, isPointWithinBoundaries, getLineSegmentWithinBounds, computeIntersection } from './src/core/geometry.js';
     import { splitBaseSub } from './src/core/labels.js';
     import { computeBraceRadii, planUnderbrace4QuartersAnchored } from './src/core/brace.js';
 
-    /* NEW for B2: state management */
+    /* State (B2) */
     import { createHistoryStore } from './src/state/history.js';
     import { reducer, initialState as baseInitial } from './src/state/reducer.js';
     import { visibleSupply, visibleDemand, allCurves } from './src/state/selectors.js';
-    import { startRouter, onRoute, currentRoute } from './src/app/router.js';
-    startRouter();
+
+    let currentFeature = null;
 
     // --- helper to execute a brace plan from core/brace.js ---
     function executeBracePlan(ctx, plan) {
@@ -124,6 +146,20 @@
       }
       ctx.restore();
     }
+
+    // ---- helpers bundle passed to features ----
+    const helpers = {
+      getOuterBoundaries,
+      getEffectiveBoundaries,
+      computeIntersection,
+      computeBraceRadii,
+      planUnderbrace4QuartersAnchored,
+      executeBracePlan,
+      getLineSegmentWithinBounds,
+      selectors: { visibleSupply, visibleDemand, allCurves },
+      getTextSize: () => store.getState().textSize,
+      lineW: () => store.getState().textSize / 5,
+    };
 
     // ================== APP CODE USING PURE STATE ==================
 
@@ -419,6 +455,11 @@
       if(isDiseq()){ renderPriceOverlay(priceDrag.dragging || priceDrag.hover); }
 
       renderLabels(eff, drawnSegById);
+
+      /* ---- C2 Step 6: feature overlay hook ---- */
+      if (currentFeature?.overlay) {
+        currentFeature.overlay(ctx, store, helpers);
+      }
     }
 
     // --- interaction state
@@ -465,9 +506,7 @@
       toggleEquilibrium.classList.toggle('active',newMode==='equilibrium');
       toggleDisequilibrium.classList.toggle('active',newMode==='disequilibrium');
       if(newMode==='equilibrium'){
-        priceDrag.dragging=false; 
-        // clear price marker
-        // (keep last value in state if you prefer; no-op here)
+        priceDrag.dragging=false;
       }else{
         const s = store.getState();
         if(s.priceY == null){
@@ -499,8 +538,9 @@
     function isNearPriceLine(x,y){ if(!isDiseq()) return false; const yP=store.getState().priceY; if(yP==null) return false; return Math.abs(y-yP) < 6; }
 
     // mouse events
-    canvas.addEventListener('mousedown',(e)=>{
-      const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+    const canvasEl = canvas;
+    canvasEl.addEventListener('mousedown',(e)=>{
+      const r=canvasEl.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
       if(isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y)){
         priceDrag.dragging=true;
         store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
@@ -531,10 +571,10 @@
       }
     });
 
-    canvas.addEventListener('mousemove',(e)=>{
-      const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+    canvasEl.addEventListener('mousemove',(e)=>{
+      const r=canvasEl.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
       priceDrag.hover = isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y);
-      canvas.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
+      canvasEl.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
 
       if(priceDrag.dragging){
         store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
@@ -543,17 +583,14 @@
 
       if(dragging && mode==='shift' && currentId){
         const dx=m.x-lastMouseX; lastMouseX=m.x;
-        // optimistic dispatch, revert if no equilibrium
         const before = store.getState();
         store.dispatch({ type:'shiftCurve', id: currentId, dx });
-        const after = store.getState();
-        if(!getEquilibriumPoint(after)) { store.undo(); }
+        if(!getEquilibriumPoint(store.getState())) { store.undo(); }
         renderDiagram();
       } else if(rotating && mode==='rotate' && currentId && rotationPivot){
         const dx=m.x-initialMouseX;
         const me = store.getState().curves.find(c=>c.id===currentId);
         const newA=(m.y>rotationPivot.y)?(initialAngle - dx*0.005):(initialAngle + dx*0.005);
-        const before = store.getState();
         store.dispatch({ type:'rotateCurve', id: currentId, angle:newA, pivot:rotationPivot });
         if(!getEquilibriumPoint(store.getState())) { store.undo(); }
         renderDiagram();
@@ -561,8 +598,8 @@
     });
 
     function stopDrags(){ dragging=false; rotating=false; currentId=null; if(priceDrag.dragging){ priceDrag.dragging=false; } renderDiagram(); }
-    canvas.addEventListener('mouseup',stopDrags);
-    canvas.addEventListener('mouseleave',stopDrags);
+    canvasEl.addEventListener('mouseup',stopDrags);
+    canvasEl.addEventListener('mouseleave',stopDrags);
 
     // curve toggle buttons
     const btnS1=document.getElementById('btnS1'), btnS2=document.getElementById('btnS2'), btnS3=document.getElementById('btnS3');
@@ -583,11 +620,28 @@
     btnD2.addEventListener('click',()=>toggleCurve('D2',btnD2));
     btnD3.addEventListener('click',()=>toggleCurve('D3',btnD3));
 
-    // initial paint
+    // --- feature panel mount + routing
+    function mountPanel(feature){
+      const slot = document.getElementById('feature-panel');
+      if (!slot) return;
+      slot.innerHTML = '';
+      if (feature?.panel) feature.panel(slot, store, helpers);
+    }
+
+    onRoute(route => {
+      currentFeature = getFeature(route);
+      const ob = getOuterBoundaries();
+      store.reset(currentFeature.initialSeed(ob));
+      mountPanel(currentFeature);
+      updateButtonStates();
+      renderDiagram();
+    });
+
+    // initial paint + start router once
     updateButtonStates();
     setEqMode('equilibrium');
     renderDiagram();
+    startRouter();
   </script>
 </body>
 </html>
-
