@@ -37,25 +37,10 @@
     #canvas-area { flex:1; display:flex; flex-direction:column; margin:20px; gap:10px; }
     #canvas-container { display:flex; justify-content:center; align-items:center; }
     canvas { border:1px solid #ccc; }
-
-    /* tiny breathing room for the feature panel */
-    #feature-panel { display:block; padding-top:6px; }
-    #sidebar h2 + #feature-panel { margin-top:-10px; }
-    nav a { color:#fff; text-decoration:none; }
-    nav a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
-  <nav>
-    <h1 style="display:inline;">Microeconomics - Supply and Demand</h1>
-    <!-- Quick nav links -->
-    <span style="margin-left:10px; font-size:14px;">
-      · <a href="#supply-demand">S&amp;D</a>
-      · <a href="#tax">Tax</a>
-      · <a href="#subsidy">Subsidy</a>
-      · <a href="#externalities">Externalities</a>
-    </span>
-  </nav>
+  <nav><h1>Microeconomics - Supply and Demand</h1></nav>
 
   <div id="main-container">
     <div id="sidebar">
@@ -97,11 +82,10 @@
         <div id="toggleEquilibrium" class="curve-control-segment active">Equilibrium</div>
         <div id="toggleDisequilibrium" class="curve-control-segment">Disequilibrium</div>
       </div>
-
-      <!-- Feature slot lives INSIDE the sidebar -->
-      <h2>Feature</h2>
-      <div id="feature-panel"></div>
     </div>
+
+    <h2>Feature</h2>
+    <div id="feature-panel"></div>
 
     <div id="canvas-area">
       <div id="canvas-container">
@@ -111,20 +95,72 @@
   </div>
 
   <script type="module">
-    import { getFeature } from './src/app/features.js';
+    /* Router + features */
     import { startRouter, onRoute } from './src/app/router.js';
+    import { getFeature } from './src/app/features.js';
 
     /* Core helpers */
     import { clamp, isPointWithinBoundaries, getLineSegmentWithinBounds, computeIntersection } from './src/core/geometry.js';
     import { splitBaseSub } from './src/core/labels.js';
     import { computeBraceRadii, planUnderbrace4QuartersAnchored } from './src/core/brace.js';
 
-    /* State (B2) */
+    /* State */
     import { createHistoryStore } from './src/state/history.js';
     import { reducer, initialState as baseInitial } from './src/state/reducer.js';
     import { visibleSupply, visibleDemand, allCurves } from './src/state/selectors.js';
 
-    let currentFeature = null;
+    // ===== Canvas + geometry essentials (needed before we seed state) =====
+    const canvas = document.getElementById('diagram');
+    const ctx = canvas.getContext('2d');
+
+    const baseMargin = 70, diagramWidth = 600;
+    const DIAGRAM_HEIGHT = 600;
+    const EXTRA_LEFT = 40;
+    const EXTRA_BOTTOM = 40;
+
+    function getOuterBoundaries() {
+      const V_SHIFT = (canvas.height - DIAGRAM_HEIGHT) - EXTRA_BOTTOM;
+      const yTopFixed    = baseMargin + V_SHIFT;
+      const yBottomFixed = yTopFixed + (DIAGRAM_HEIGHT - 2*baseMargin); // 460px axis
+      return {
+        xLeft:  baseMargin + 50 + EXTRA_LEFT,
+        xRight: (diagramWidth - baseMargin + 50) + EXTRA_LEFT,
+        yTop:   yTopFixed,
+        yBottom: yBottomFixed
+      };
+    }
+
+    // --- INITIAL STATE SEED (curves match previous numbers)
+    const obForSeed = getOuterBoundaries();
+    const seed = {
+      ...baseInitial,
+      textSize: 20,
+      curves: [
+        { id:'S1', kind:'supply',  slope:-1, intercept:(obForSeed.yBottom+obForSeed.xLeft),     label:'S1', color:'#000', visible:true  },
+        { id:'S2', kind:'supply',  slope:-1, intercept:(obForSeed.yBottom+obForSeed.xLeft+100), label:'S2', color:'#000', visible:false },
+        { id:'S3', kind:'supply',  slope:-1, intercept:(obForSeed.yBottom+obForSeed.xLeft+200), label:'S3', color:'#000', visible:false },
+        { id:'D1', kind:'demand',  slope: 1, intercept:(obForSeed.yTop -obForSeed.xLeft),       label:'D1', color:'#000', visible:true  },
+        { id:'D2', kind:'demand',  slope: 1, intercept:(obForSeed.yTop -obForSeed.xLeft-100),   label:'D2', color:'#000', visible:false },
+        { id:'D3', kind:'demand',  slope: 1, intercept:(obForSeed.yTop -obForSeed.xLeft-200),   label:'D3', color:'#000', visible:false }
+      ],
+      eqMode: 'equilibrium',
+      priceY: null,
+      marginEnabled: false
+    };
+
+    // Create store BEFORE router starts
+    const store = createHistoryStore(reducer, seed);
+
+    // Now we can define helpers that read state
+    const getTextSize = () => store.getState().textSize;
+    const lineW = () => store.getState().textSize / 5;
+    const isDiseq = () => store.getState().eqMode === 'disequilibrium';
+
+    function getEffectiveBoundaries() {
+      const o = getOuterBoundaries();
+      const extra = store.getState().marginEnabled ? 50 : 0;
+      return { xLeft:o.xLeft+extra, xRight:o.xRight-extra, yTop:o.yTop+extra, yBottom:o.yBottom-extra };
+    }
 
     // --- helper to execute a brace plan from core/brace.js ---
     function executeBracePlan(ctx, plan) {
@@ -157,67 +193,19 @@
       executeBracePlan,
       getLineSegmentWithinBounds,
       selectors: { visibleSupply, visibleDemand, allCurves },
-      getTextSize: () => store.getState().textSize,
-      lineW: () => store.getState().textSize / 5,
+      getTextSize,
+      lineW
     };
 
-    // ================== APP CODE USING PURE STATE ==================
-
-    // canvas + geometry
-    const canvas = document.getElementById('diagram');
-    const ctx = canvas.getContext('2d');
-
-    const baseMargin = 70, diagramWidth = 600;
-    const DIAGRAM_HEIGHT = 600;
-    const EXTRA_LEFT = 40;
-    const EXTRA_BOTTOM = 40;
-
-    function getOuterBoundaries() {
-      const V_SHIFT = (canvas.height - DIAGRAM_HEIGHT) - EXTRA_BOTTOM;
-      const yTopFixed    = baseMargin + V_SHIFT;
-      const yBottomFixed = yTopFixed + (DIAGRAM_HEIGHT - 2*baseMargin); // 460px axis
-      return {
-        xLeft:  baseMargin + 50 + EXTRA_LEFT,
-        xRight: (diagramWidth - baseMargin + 50) + EXTRA_LEFT,
-        yTop:   yTopFixed,
-        yBottom: yBottomFixed
-      };
+    // Panel mount
+    function mountPanel(feature){
+      const slot = document.getElementById('feature-panel');
+      if (!slot) return;
+      slot.innerHTML = '';
+      if (feature?.panel) feature.panel(slot, store, helpers);
     }
 
-    function getEffectiveBoundaries() {
-      const o = getOuterBoundaries();
-      const extra = store.getState().marginEnabled ? 50 : 0;
-      return { xLeft:o.xLeft+extra, xRight:o.xRight-extra, yTop:o.yTop+extra, yBottom:o.yBottom-extra };
-    }
-
-    // text sizing derived from state
-    const lineW = () => store.getState().textSize / 5;
-
-    // --- INITIAL STATE SEED (curves match your previous numbers)
-    const ob = getOuterBoundaries();
-    const seed = {
-      ...baseInitial,
-      textSize: 20,
-      curves: [
-        { id:'S1', kind:'supply',  slope:-1, intercept:(ob.yBottom+ob.xLeft),     label:'S1', color:'#000', visible:true  },
-        { id:'S2', kind:'supply',  slope:-1, intercept:(ob.yBottom+ob.xLeft+100), label:'S2', color:'#000', visible:false },
-        { id:'S3', kind:'supply',  slope:-1, intercept:(ob.yBottom+ob.xLeft+200), label:'S3', color:'#000', visible:false },
-        { id:'D1', kind:'demand',  slope: 1, intercept:(ob.yTop -ob.xLeft),       label:'D1', color:'#000', visible:true  },
-        { id:'D2', kind:'demand',  slope: 1, intercept:(ob.yTop -ob.xLeft-100),   label:'D2', color:'#000', visible:false },
-        { id:'D3', kind:'demand',  slope: 1, intercept:(ob.yTop -ob.xLeft-200),   label:'D3', color:'#000', visible:false }
-      ],
-      eqMode: 'equilibrium',
-      priceY: null,
-      marginEnabled: false
-    };
-
-    const store = createHistoryStore(reducer, seed);
-
-    // utilities that depend on state
-    const getTextSize = () => store.getState().textSize;
-    const isDiseq = () => store.getState().eqMode === 'disequilibrium';
-
-    // --- drawing helpers that read state
+    // ===== Drawing helpers =====
     const SUBSCRIPT_DEFAULT = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_Q       = { subScale:.70, dropEm:.26, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_CURVE   = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
@@ -246,7 +234,6 @@
       ctx.setLineDash([15,15]); ctx.strokeStyle='gray'; ctx.lineWidth=lineW();
     }
 
-    // --- equilibrium computation from state
     function getEquilibriumPoint(s) {
       const eff = getEffectiveBoundaries();
       const S = visibleSupply(s), D = visibleDemand(s);
@@ -336,7 +323,7 @@
     }
     function renderP3Q3Auto(){ const sel=choosePairForP3(); if(!sel) return; renderPairEquilibriumForSub(sel.s, sel.d, 3, 3); }
 
-    // --- Disequilibrium overlay (uses state eqMode/priceY + brace planner)
+    // --- Disequilibrium overlay ---
     const priceDrag = { dragging:false, hover:false, handleRadius:7 };
 
     function renderPriceOverlay(show){
@@ -394,7 +381,7 @@
         ctx.fillRect(leftAttach, yP, rightAttach-leftAttach, o.yBottom-yP); ctx.restore();
       }
 
-      // Brace baseline
+      // Brace + caption
       const textSize = getTextSize();
       const qLabelTop = o.yBottom + 15;
       const qLabelH   = textSize;
@@ -420,7 +407,6 @@
         });
         if (plan) executeBracePlan(ctx, plan);
 
-        // Caption
         const midX = (leftAttach + rightAttach)/2;
         const label = shortage ? 'Shortage' : 'Surplus';
         const labelSize = Math.max(10, Math.round(textSize * 0.85));
@@ -455,11 +441,6 @@
       if(isDiseq()){ renderPriceOverlay(priceDrag.dragging || priceDrag.hover); }
 
       renderLabels(eff, drawnSegById);
-
-      /* ---- C2 Step 6: feature overlay hook ---- */
-      if (currentFeature?.overlay) {
-        currentFeature.overlay(ctx, store, helpers);
-      }
     }
 
     // --- interaction state
@@ -522,7 +503,6 @@
 
     // helpers for finding nearest curve
     const distToCurve = (c, px, py) => Math.abs(c.slope*px - py + c.intercept)/Math.sqrt(c.slope**2+1);
-
     function nearestCurveIdAt(m){
       let cand=null, min=Infinity;
       allCurves(store.getState()).forEach(c=>{
@@ -538,9 +518,8 @@
     function isNearPriceLine(x,y){ if(!isDiseq()) return false; const yP=store.getState().priceY; if(yP==null) return false; return Math.abs(y-yP) < 6; }
 
     // mouse events
-    const canvasEl = canvas;
-    canvasEl.addEventListener('mousedown',(e)=>{
-      const r=canvasEl.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+    canvas.addEventListener('mousedown',(e)=>{
+      const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
       if(isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y)){
         priceDrag.dragging=true;
         store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
@@ -555,7 +534,7 @@
         // choose pivot
         const s=store.getState();
         let pivot=null;
-        const me = s.curves.find(c=>c.id===id);
+        const me = s.curves.find(c=>c.id===currentId);
         const other = (me.kind==='supply') ? visibleDemand(s) : visibleSupply(s);
         if(other){
           const p=computeIntersection(me.slope,me.intercept, other.slope,other.intercept);
@@ -571,10 +550,10 @@
       }
     });
 
-    canvasEl.addEventListener('mousemove',(e)=>{
-      const r=canvasEl.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+    canvas.addEventListener('mousemove',(e)=>{
+      const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
       priceDrag.hover = isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y);
-      canvasEl.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
+      canvas.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
 
       if(priceDrag.dragging){
         store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
@@ -598,8 +577,8 @@
     });
 
     function stopDrags(){ dragging=false; rotating=false; currentId=null; if(priceDrag.dragging){ priceDrag.dragging=false; } renderDiagram(); }
-    canvasEl.addEventListener('mouseup',stopDrags);
-    canvasEl.addEventListener('mouseleave',stopDrags);
+    canvas.addEventListener('mouseup',stopDrags);
+    canvas.addEventListener('mouseleave',stopDrags);
 
     // curve toggle buttons
     const btnS1=document.getElementById('btnS1'), btnS2=document.getElementById('btnS2'), btnS3=document.getElementById('btnS3');
@@ -620,16 +599,16 @@
     btnD2.addEventListener('click',()=>toggleCurve('D2',btnD2));
     btnD3.addEventListener('click',()=>toggleCurve('D3',btnD3));
 
-    // --- feature panel mount + routing
-    function mountPanel(feature){
-      const slot = document.getElementById('feature-panel');
-      if (!slot) return;
-      slot.innerHTML = '';
-      if (feature?.panel) feature.panel(slot, store, helpers);
-    }
+    // ===== Router bootstrap (the two guards) =====
+    // 1) Default route if none provided
+    if (!location.hash) location.hash = '#supply-demand';
 
+    // 2) Robust handler with fallback, runs AFTER store exists
+    let currentFeature = null;
     onRoute(route => {
-      currentFeature = getFeature(route);
+      const fallback = 'supply-demand';
+      currentFeature = getFeature(route) || getFeature(fallback);
+
       const ob = getOuterBoundaries();
       store.reset(currentFeature.initialSeed(ob));
       mountPanel(currentFeature);
@@ -637,11 +616,12 @@
       renderDiagram();
     });
 
-    // initial paint + start router once
-    updateButtonStates();
-    setEqMode('equilibrium');
-    renderDiagram();
+    // Start router once
     startRouter();
+
+    // Initial paint (in case the route handler didn’t run yet)
+    updateButtonStates();
+    renderDiagram();
   </script>
 </body>
 </html>
