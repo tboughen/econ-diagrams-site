@@ -106,26 +106,11 @@
     </div>
   </div>
 
-   <script type="module">
+  <script type="module">
     import { clamp, isPointWithinBoundaries, getLineSegmentWithinBounds, computeIntersection } from './src/core/geometry.js';
     import { splitBaseSub } from './src/core/labels.js';
     import { computeBraceRadii, planUnderbrace4QuartersAnchored } from './src/core/brace.js';
-  
-    // ↓↓↓ Paste your existing script’s content below,
-    // but remove the old definitions of:
-    //   clamp, isPointWithinBoundaries, getLineSegmentWithinBounds,
-    //   computeIntersection, normalizeSubDigits, splitBaseSub,
-    //   computeBraceRadii, strokeLeftEndCurlHalfFromJoin,
-    //   strokeRightEndCurlHalfFromJoin, drawUnderbrace4QuartersAnchored
-    //
-    // And update any references:
-    //  - use the imported clamp/getLineSegmentWithinBounds/computeIntersection directly
-    //  - instead of drawUnderbrace4QuartersAnchored(...), do:
-    //        const plan = planUnderbrace4QuartersAnchored(...);
-    //        if (plan) executeBracePlan(ctx, plan);   // helper provided below
-    //
-    //  - keep drawWithSubscript as-is (it draws to canvas); we only moved parsing.
-  
+
     // --- helper to execute a brace plan from core/brace.js ---
     function executeBracePlan(ctx, plan) {
       const { style, ops } = plan;
@@ -135,30 +120,415 @@
       ctx.lineWidth = style.lineWidth;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-  
       for (const op of ops) {
         if (op.op === 'line') {
-          ctx.beginPath();
-          ctx.moveTo(op.from.x, op.from.y);
-          ctx.lineTo(op.to.x, op.to.y);
-          ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(op.from.x, op.from.y); ctx.lineTo(op.to.x, op.to.y); ctx.stroke();
         } else if (op.op === 'quad') {
-          ctx.beginPath();
-          ctx.moveTo(op.from.x, op.from.y);
-          ctx.quadraticCurveTo(op.ctrl.x, op.ctrl.y, op.to.x, op.to.y);
-          ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(op.from.x, op.from.y); ctx.quadraticCurveTo(op.ctrl.x, op.ctrl.y, op.to.x, op.to.y); ctx.stroke();
         } else if (op.op === 'arc') {
-          ctx.beginPath();
-          ctx.arc(op.cx, op.cy, op.r, op.fromAngle, op.toAngle, op.ccw);
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(op.cx, op.cy, op.r, op.fromAngle, op.toAngle, op.ccw); ctx.stroke();
         }
       }
       ctx.restore();
     }
-  
-    // === paste the REST of your existing code here ===
-  </script>
 
+    // ================== ORIGINAL APP CODE (trimmed of moved helpers) ==================
+
+    let marginEnabled = false;
+
+    const baseMargin = 70, diagramWidth = 600;
+    const DIAGRAM_HEIGHT = 600;   // original diagram height (fixed axis height = 460)
+    const EXTRA_LEFT = 40;
+    const EXTRA_BOTTOM = 40;
+
+    const canvas = document.getElementById('diagram');
+    const ctx = canvas.getContext('2d');
+
+    function getOuterBoundaries() {
+      const V_SHIFT = (canvas.height - DIAGRAM_HEIGHT) - EXTRA_BOTTOM;
+      const yTopFixed    = baseMargin + V_SHIFT;
+      const yBottomFixed = yTopFixed + (DIAGRAM_HEIGHT - 2*baseMargin); // 460px tall axis
+
+      return {
+        xLeft:  baseMargin + 50 + EXTRA_LEFT,
+        xRight: (diagramWidth - baseMargin + 50) + EXTRA_LEFT,
+        yTop:   yTopFixed,
+        yBottom: yBottomFixed
+      };
+    }
+    function getEffectiveBoundaries() {
+      const o = getOuterBoundaries(); const extra = marginEnabled ? 50 : 0;
+      return { xLeft:o.xLeft+extra, xRight:o.xRight-extra, yTop:o.yTop+extra, yBottom:o.yBottom-extra };
+    }
+    let textSize = 20;
+
+    function getLineWidth(){ return textSize/5; }
+
+    /* ==== Subscripts (drawing only; parsing lives in core/labels) ==== */
+    const SUBSCRIPT_DEFAULT = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
+    const SUBSCRIPT_Q       = { subScale:.70, dropEm:.26, kernPx:-.5, color:'#000' };
+    const SUBSCRIPT_CURVE   = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
+
+    function drawWithSubscript(main, sub, x, y, {
+      align='left', baseline='alphabetic', subScale=.70, dropEm=.20, kernPx=0, color='#000'
+    }={}) {
+      const mainSize=textSize, subSize=Math.round(textSize*subScale), drop=Math.round(textSize*dropEm);
+      ctx.save(); ctx.textBaseline=baseline;
+
+      ctx.font = `${mainSize}px Arial`; const wMain=ctx.measureText(main).width;
+      ctx.font = `${subSize}px Arial`;  const wSub =ctx.measureText(sub).width;
+      const total = wMain + kernPx + wSub;
+
+      let startX=x;
+      if(align==='center') startX=x-total/2;
+      else if(align==='right') startX=x-total;
+
+      ctx.font = `${mainSize}px Arial`; ctx.fillStyle=color; ctx.fillText(main,startX,y);
+      ctx.font = `${subSize}px Arial`;  ctx.fillStyle=color; ctx.fillText(sub, startX+wMain+kernPx, y+drop);
+      ctx.restore();
+    }
+
+    class InfiniteCurve{
+      constructor(slope,intercept,color,type,label){
+        this.slope=slope; this.intercept=intercept; this.color=color||'black'; this.type=type;
+        this.label=label||(type==='supply'?'S1':'D1'); this.segment=null; this.visible=true;
+      }
+      draw(ctx,b){
+        if(!this.visible){this.segment=null;return null;}
+        const seg=getLineSegmentWithinBounds(this.slope,this.intercept,b.xLeft,b.xRight,b.yTop,b.yBottom);
+        this.segment=seg;
+        if(seg){ ctx.strokeStyle=this.color; ctx.lineWidth=getLineWidth(); ctx.beginPath(); ctx.moveTo(seg[0].x,seg[0].y); ctx.lineTo(seg[1].x,seg[1].y); ctx.stroke(); }
+        return seg;
+      }
+      distanceToPoint(px,py){return Math.abs(this.slope*px - py + this.intercept)/Math.sqrt(this.slope**2+1);}
+      shiftBy(dx){ this.intercept -= (this.slope*dx); }
+      rotateTo(newAngle,pivot){
+        let minA,maxA; if(this.type==='supply'){minA=(-Math.PI/2)+0.001; maxA=0;} else {minA=0; maxA=(Math.PI/2)-0.001;}
+        const a=Math.min(Math.max(newAngle,minA),maxA); this.slope=Math.tan(a); this.intercept=pivot.y - this.slope*pivot.x;
+      }
+    }
+
+    class DiagramStore{
+      constructor(){ this.supplyCurves=[]; this.demandCurves=[]; this.history=[]; this.redoHistory=[]; }
+      addSupplyCurve(c){ this.supplyCurves.push(c); } addDemandCurve(c){ this.demandCurves.push(c); }
+      getState(){ return { supplyCurves:this.supplyCurves.map(c=>({slope:c.slope,intercept:c.intercept,color:c.color,type:c.type,label:c.label,visible:c.visible})),
+                           demandCurves:this.demandCurves.map(c=>({slope:c.slope,intercept:c.intercept,color:c.color,type:c.type,label:c.label,visible:c.visible})) }; }
+      setState(s){ this.supplyCurves.forEach((c,i)=>{ if(s.supplyCurves[i]) Object.assign(c,s.supplyCurves[i]); });
+                   this.demandCurves.forEach((c,i)=>{ if(s.demandCurves[i]) Object.assign(c,s.demandCurves[i]); }); }
+      saveState(){ const s=this.getState(); if(this.history.length===0 || JSON.stringify(s)!==JSON.stringify(this.history[this.history.length-1])){ this.history.push(s); this.redoHistory=[]; } }
+      undo(){ if(this.history.length>1){ this.redoHistory.push(this.getState()); this.history.pop(); this.setState(this.history[this.history.length-1]); } }
+      redo(){ if(this.redoHistory.length>0){ this.history.push(this.getState()); this.setState(this.redoHistory.pop()); } }
+      reset(initial){ this.history=[]; this.redoHistory=[]; this.setState(initial); }
+      getVisibleSupply(){ return this.supplyCurves.find(c=>c.visible)||null; }
+      getVisibleDemand(){ return this.demandCurves.find(c=>c.visible)||null; }
+      getEquilibrium(){ const s=this.getVisibleSupply(), d=this.getVisibleDemand(); if(!s||!d) return null;
+        const eq=computeIntersection(s.slope,s.intercept,d.slope,d.intercept); const eff=getEffectiveBoundaries();
+        return (eq && isPointWithinBoundaries(eq,eff)) ? eq : null; }
+      tryShiftCurve(curve,dx){ const oi=curve.intercept; curve.shiftBy(dx); if(this.getVisibleSupply()&&this.getVisibleDemand()&&!this.getEquilibrium()) curve.intercept=oi; }
+      tryRotateCurve(curve,ang,piv){ const os=curve.slope, oi=curve.intercept; curve.rotateTo(ang,piv);
+        if(this.getVisibleSupply()&&this.getVisibleDemand()&&!this.getEquilibrium()){ curve.slope=os; curve.intercept=oi; } }
+    }
+
+    const store=new DiagramStore(); const ob=getOuterBoundaries();
+    const S1=new InfiniteCurve(-1, (ob.yBottom+ob.xLeft), 'black','supply','S1');
+    const S2=new InfiniteCurve(-1, (ob.yBottom+ob.xLeft+100), 'black','supply','S2');
+    const S3=new InfiniteCurve(-1, (ob.yBottom+ob.xLeft+200), 'black','supply','S3');
+    const D1=new InfiniteCurve( 1, (ob.yTop -ob.xLeft), 'black','demand','D1');
+    const D2=new InfiniteCurve( 1, (ob.yTop -ob.xLeft-100), 'black','demand','D2');
+    const D3=new InfiniteCurve( 1, (ob.yTop -ob.xLeft-200), 'black','demand','D3');
+    store.addSupplyCurve(S1); store.addSupplyCurve(S2); store.addSupplyCurve(S3);
+    store.addDemandCurve(D1); store.addDemandCurve(D2); store.addDemandCurve(D3);
+    S1.visible=true; S2.visible=false; S3.visible=false; D1.visible=true; D2.visible=false; D3.visible=false;
+    const initialState=store.getState(); store.saveState();
+
+    const priceDrag={ y:null, dragging:false, hover:false, handleRadius:7, overlayActive:false };
+    let eqMode = 'equilibrium';
+    const isDiseq = () => eqMode==='disequilibrium';
+
+    function useEquilibriumDash(){ ctx.setLineDash([15,15]); ctx.strokeStyle='gray'; ctx.lineWidth=getLineWidth(); }
+
+    function setEqMode(newMode){
+      eqMode=newMode;
+      toggleEquilibrium.classList.toggle('active',eqMode==='equilibrium');
+      toggleDisequilibrium.classList.toggle('active',eqMode==='disequilibrium');
+      if(eqMode==='equilibrium'){
+        const eq=store.getEquilibrium(); priceDrag.dragging=false; priceDrag.overlayActive=false; priceDrag.y=eq?eq.y:null;
+      }else{
+        if(priceDrag.y==null){
+          const eq=store.getEquilibrium();
+          priceDrag.y = eq ? eq.y : getEffectiveBoundaries().yTop + 40;
+        }
+      }
+      renderDiagram();
+    }
+
+    function drawAxes(){
+      const o=getOuterBoundaries(); ctx.save(); ctx.strokeStyle='black'; ctx.lineWidth=getLineWidth();
+      ctx.beginPath(); ctx.moveTo(o.xLeft,o.yBottom); ctx.lineTo(o.xRight,o.yBottom); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(o.xLeft,o.yBottom); ctx.lineTo(o.xLeft,o.yTop); ctx.stroke();
+      ctx.font=`${textSize}px Arial`; ctx.fillStyle='black';
+      ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillText('Price', o.xLeft-10, o.yTop);
+      ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillText('Quantity', o.xRight, o.yBottom+10);
+      ctx.restore();
+    }
+
+    function renderEquilibrium(){
+      const eq=store.getEquilibrium(); if(!eq) return; const o=getOuterBoundaries(); const eff=getEffectiveBoundaries();
+      ctx.save(); ctx.setLineDash([15,15]); ctx.strokeStyle='gray'; ctx.lineWidth=getLineWidth();
+      ctx.beginPath(); ctx.moveTo(eq.x,eq.y); ctx.lineTo(eq.x,o.yBottom); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(eq.x,eq.y); ctx.lineTo(o.xLeft,eq.y); ctx.stroke();
+      ctx.restore();
+
+      ctx.save(); ctx.beginPath(); ctx.rect(eff.xLeft,eff.yTop, eff.xRight-eff.xLeft, eff.yBottom-eff.yTop); ctx.clip();
+      ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(eq.x,eq.y,5,0,2*Math.PI); ctx.fill(); ctx.restore();
+
+      drawWithSubscript('P','1', o.xLeft-15, eq.y, {align:'right', baseline:'middle', ...SUBSCRIPT_DEFAULT});
+      drawWithSubscript('Q','1', eq.x, o.yBottom+15, {align:'center', baseline:'top', ...SUBSCRIPT_Q});
+    }
+
+    function renderLabels(){
+      const all=store.supplyCurves.concat(store.demandCurves);
+      all.forEach(curve=>{
+        if(curve.segment){
+          const end=(curve.segment[0].x<curve.segment[1].x)?curve.segment[1]:curve.segment[0];
+          const {base,sub}=splitBaseSub(curve.label);
+          drawWithSubscript(base, sub, end.x+10, end.y-10, {align:'left', baseline:'bottom', ...SUBSCRIPT_CURVE});
+        }
+      });
+    }
+
+    function computeQxAtPrice(y, curve){ if(!curve||!curve.visible||Math.abs(curve.slope)<1e-9) return null; return (y - curve.intercept)/curve.slope; }
+
+    /* ===== Equilibria helpers ===== */
+    function renderPairEquilibriumForSub(supply, demand, pSubNum, qSubNum){
+      if(!supply||!demand||!supply.visible||!demand.visible) return;
+      const eff=getEffectiveBoundaries(), o=getOuterBoundaries();
+      const eq=computeIntersection(supply.slope,supply.intercept,demand.slope,demand.intercept);
+      if(!eq||!isPointWithinBoundaries(eq,eff)) return;
+
+      ctx.save(); useEquilibriumDash();
+      ctx.beginPath(); ctx.moveTo(eq.x,eq.y); ctx.lineTo(eq.x,o.yBottom); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(eq.x,eq.y); ctx.lineTo(o.xLeft,eq.y);   ctx.stroke();
+      ctx.restore();
+
+      ctx.save(); ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(eq.x,eq.y,4,0,2*Math.PI); ctx.fill(); ctx.restore();
+
+      drawWithSubscript('P', String(pSubNum), o.xLeft-15, eq.y, {align:'right', baseline:'middle', ...SUBSCRIPT_DEFAULT});
+      drawWithSubscript('Q', String(qSubNum), eq.x, o.yBottom+15, {align:'center', baseline:'top', ...SUBSCRIPT_Q});
+    }
+    function inBoundsPair(s,d){ if(!s||!d||!s.visible||!d.visible) return false;
+      const eff=getEffectiveBoundaries(); const eq=computeIntersection(s.slope,s.intercept,d.slope,d.intercept);
+      return eq && isPointWithinBoundaries(eq,eff); }
+    function renderP2Q2Auto(){
+      const cand=[[S2,D2],[S1,D2],[S2,D1]];
+      for(const [s,d] of cand){ if(inBoundsPair(s,d)){ renderPairEquilibriumForSub(s,d,2,2); return; } }
+    }
+    function choosePairForP3(){
+      const cand=[[S3,D3],[S3,D2],[S2,D3],[S3,D1],[S1,D3]];
+      for(const [s,d] of cand){ if(inBoundsPair(s,d)) return {s,d}; }
+      return null;
+    }
+    function renderP3Q3Auto(){ const sel=choosePairForP3(); if(!sel) return; renderPairEquilibriumForSub(sel.s, sel.d, 3, 3); }
+
+    /* ===== Disequilibrium overlay (uses new brace planner) ===== */
+    function renderPriceOverlay(show){
+      if(!isDiseq()) return;
+      if(priceDrag.y==null){ const eq=store.getEquilibrium(); if(eq) priceDrag.y=eq.y; }
+      if(priceDrag.y==null) return;
+
+      const eff=getEffectiveBoundaries(), o=getOuterBoundaries(), s=store.getVisibleSupply(), d=store.getVisibleDemand();
+      if(!s||!d) return;
+
+      const yP=clamp(priceDrag.y, eff.yTop, eff.yBottom);
+
+      const xS=computeQxAtPrice(yP,s), xD=computeQxAtPrice(yP,d);
+      const valid=(x)=>x!=null && x>=eff.xLeft && x<=eff.xRight; if(!valid(xS)||!valid(xD)) return;
+
+      const leftAttach = Math.min(xS,xD);
+      const rightAttach= Math.max(xS,xD);
+
+      // Handle (neutral colours, no yellow)
+      ctx.save();
+      const hover = priceDrag.hover || priceDrag.dragging;
+      ctx.fillStyle = '#555';
+      ctx.beginPath(); ctx.arc(o.xLeft, yP, priceDrag.handleRadius, 0, 2*Math.PI); ctx.fill();
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth   = hover ? 2.5 : 1.5;
+      ctx.stroke();
+      ctx.restore();
+
+      if(!show) return;
+
+      // Horizontal price dash to rightmost Q
+      ctx.save(); useEquilibriumDash(); ctx.lineCap='butt';
+      ctx.beginPath(); ctx.moveTo(o.xLeft, yP); ctx.lineTo(rightAttach, yP); ctx.stroke();
+      ctx.restore();
+
+      // Price label (force black)
+      drawWithSubscript('P','1', o.xLeft-15, yP, {align:'right', baseline:'middle', ...SUBSCRIPT_DEFAULT});
+
+      // Vertical Q guides
+      ctx.save(); useEquilibriumDash();
+      ctx.beginPath(); ctx.moveTo(xS, yP); ctx.lineTo(xS, o.yBottom); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xD, yP); ctx.lineTo(xD, o.yBottom); ctx.stroke();
+      ctx.restore();
+
+      // Q labels
+      drawWithSubscript('Q','D', xD, o.yBottom+15, {align:'center', baseline:'top', ...SUBSCRIPT_Q});
+      drawWithSubscript('Q','S', xS, o.yBottom+15, {align:'center', baseline:'top', ...SUBSCRIPT_Q});
+
+      // Shading
+      if(Math.abs(xS-xD)>1e-3){
+        ctx.save(); ctx.globalAlpha=.15; ctx.fillStyle=(xS>xD)?'#2a9d8f':'#d62828';
+        ctx.fillRect(leftAttach, yP, rightAttach-leftAttach, o.yBottom-yP); ctx.restore();
+      }
+
+      // Brace baseline (always below Q labels)
+      const qLabelTop = o.yBottom + 15;
+      const qLabelH   = textSize;
+      const gapBelow  = Math.max(6, textSize*0.20);
+      const baselineY = qLabelTop + qLabelH + gapBelow;
+
+      const shortage = (xD > xS);
+      const braceColor = shortage ? '#d62828' : '#2a9d8f';
+
+      const L = rightAttach - leftAttach;
+      if (L >= 10) {
+        // Compute radii then ensure they won't clip canvas bottom
+        const radii = computeBraceRadii(L);
+
+        const clearance = (canvas.height - 6) - baselineY;
+        const needMax = Math.max(radii.rEnd, radii.rMid);
+        if (clearance < needMax) {
+          const k = Math.max(0, clearance) / (needMax || 1);
+          radii.rEnd *= k; radii.rMid *= k;
+        }
+
+        const plan = planUnderbrace4QuartersAnchored(leftAttach, rightAttach, baselineY, {
+          color: braceColor,
+          lineWidth: Math.max(1.5, textSize/5.5),
+          radii
+        });
+        if (plan) executeBracePlan(ctx, plan);
+
+        // Caption under the (lowered) mid dip (match old behaviour)
+        const midX = (leftAttach + rightAttach)/2;
+        const label = shortage ? 'Shortage' : 'Surplus';
+        const labelSize = Math.max(10, Math.round(textSize * 0.85));
+        const delta = 0.5 * radii.rEnd;
+        const yTextRaw = (baselineY + delta) + radii.rMid + Math.max(6, textSize*0.25);
+        const yText = Math.min(canvas.height - 6, yTextRaw);
+
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.fillStyle = braceColor;
+        ctx.font = `${labelSize}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(label, midX, yText);
+        ctx.restore();
+      }
+    }
+
+    function renderDiagram(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      drawAxes();
+      const eff=getEffectiveBoundaries();
+      store.supplyCurves.forEach(c=>c.draw(ctx,eff));
+      store.demandCurves.forEach(c=>c.draw(ctx,eff));
+
+      if(eqMode==='equilibrium'){ renderEquilibrium(); renderP2Q2Auto(); renderP3Q3Auto(); }
+      if(isDiseq()){ renderPriceOverlay(priceDrag.dragging || priceDrag.overlayActive); }
+
+      renderLabels();
+    }
+
+    let mode='shift', currentCurve=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
+
+    document.getElementById('btnLarger').addEventListener('click', ()=>{ textSize+=2; renderDiagram(); });
+    document.getElementById('btnSmaller').addEventListener('click', ()=>{ textSize=Math.max(10,textSize-2); renderDiagram(); });
+    document.getElementById('btnReset').addEventListener('click', ()=>{ textSize=20; renderDiagram(); });
+
+    const marginToggle=document.getElementById('marginToggle');
+    marginToggle.addEventListener('click', ()=>{ marginEnabled=!marginEnabled; marginToggle.classList.toggle('active', marginEnabled); renderDiagram(); });
+
+    const btnUndo=document.getElementById('btnUndo'), btnRedo=document.getElementById('btnRedo'), btnResetActions=document.getElementById('btnResetActions');
+    btnUndo.addEventListener('click', ()=>{ store.undo(); renderDiagram(); });
+    btnRedo.addEventListener('click', ()=>{ store.redo(); renderDiagram(); });
+    btnResetActions.addEventListener('click', ()=>{
+      store.reset(initialState);
+      S1.visible=true; S2.visible=false; S3.visible=false; D1.visible=true; D2.visible=false; D3.visible=false;
+      updateButtonStates(); setEqMode('equilibrium'); renderDiagram();
+    });
+
+    const toggleShifts=document.getElementById('toggleShifts'), toggleElasticity=document.getElementById('toggleElasticity');
+    toggleShifts.addEventListener('click', ()=>{ mode='shift'; toggleShifts.classList.add('active'); toggleElasticity.classList.remove('active'); });
+    toggleElasticity.addEventListener('click', ()=>{ mode='rotate'; toggleElasticity.classList.add('active'); toggleShifts.classList.remove('active'); });
+
+    const toggleEquilibrium=document.getElementById('toggleEquilibrium');
+    const toggleDisequilibrium=document.getElementById('toggleDisequilibrium');
+    toggleEquilibrium.addEventListener('click', ()=>setEqMode('equilibrium'));
+    toggleDisequilibrium.addEventListener('click', ()=>setEqMode('disequilibrium'));
+
+    function isNearPriceHandle(x,y){ if(!isDiseq()) return false; const o=getOuterBoundaries(); const yP=(priceDrag.y==null)?y:priceDrag.y;
+      const dx=x-o.xLeft, dy=y-yP; return Math.hypot(dx,dy) <= (priceDrag.handleRadius+4); }
+    function isNearPriceLine(x,y){ if(!isDiseq()) return false; const yP=priceDrag.y; if(yP==null) return false; return Math.abs(y-yP) < 6; }
+
+    canvas.addEventListener('mousedown',(e)=>{
+      const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+      if(isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y)){
+        priceDrag.dragging=true; priceDrag.overlayActive=true;
+        priceDrag.y=clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom); renderDiagram(); return;
+      }
+      const threshold=5; let cand=null, min=Infinity;
+      store.supplyCurves.concat(store.demandCurves).forEach(curve=>{ const d=curve.distanceToPoint(m.x,m.y); if(d<min){min=d; cand=curve;} });
+      if(min<threshold){
+        store.saveState();
+        if(mode==='shift'){ dragging=true; lastMouseX=m.x; currentCurve=cand; }
+        else{
+          rotating=true; initialMouseX=m.x; currentCurve=cand;
+          let pivot=null;
+          if(currentCurve.type==='supply'){ const dVis=store.getVisibleDemand(); if(dVis){ const p=computeIntersection(currentCurve.slope,currentCurve.intercept,dVis.slope,dVis.intercept); if(p&&isPointWithinBoundaries(p,getEffectiveBoundaries())) pivot=p; } }
+          else { const sVis=store.getVisibleSupply(); if(sVis){ const p=computeIntersection(currentCurve.slope,currentCurve.intercept,sVis.slope,sVis.intercept); if(p&&isPointWithinBoundaries(p,getEffectiveBoundaries())) pivot=p; } }
+          const eq=store.getEquilibrium(); if(!pivot&&eq) pivot=eq;
+          if(!pivot){ const eff=getEffectiveBoundaries(); const seg=getLineSegmentWithinBounds(currentCurve.slope,currentCurve.intercept,eff.xLeft,eff.xRight,eff.yTop,eff.yBottom);
+            pivot= seg ? {x:(seg[0].x+seg[1].x)/2, y:(seg[0].y+seg[1].y)/2} : {x:(eff.xLeft+eff.xRight)/2, y:(eff.yTop+eff.yBottom)/2}; }
+          rotationPivot=pivot; initialAngle=Math.atan(currentCurve.slope);
+        }
+      }
+    });
+
+    canvas.addEventListener('mousemove',(e)=>{
+      const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+      priceDrag.hover = isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y);
+      canvas.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
+
+      if(priceDrag.dragging){ priceDrag.y=clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom); renderDiagram(); return; }
+
+      if(dragging && mode==='shift' && currentCurve){ const dx=m.x-lastMouseX; lastMouseX=m.x; store.tryShiftCurve(currentCurve, dx); renderDiagram(); }
+      else if(rotating && mode==='rotate' && currentCurve && rotationPivot){ const dx=m.x-initialMouseX;
+        const newA=(m.y>rotationPivot.y)?(initialAngle - dx*0.005):(initialAngle + dx*0.005);
+        store.tryRotateCurve(currentCurve,newA,rotationPivot); renderDiagram(); }
+    });
+
+    function stopDrags(){ if(dragging||rotating) store.saveState(); dragging=false; rotating=false; currentCurve=null;
+      if(priceDrag.dragging){ priceDrag.dragging=false; } renderDiagram(); }
+    canvas.addEventListener('mouseup',stopDrags);
+    canvas.addEventListener('mouseleave',stopDrags);
+
+    const btnS1=document.getElementById('btnS1'), btnS2=document.getElementById('btnS2'), btnS3=document.getElementById('btnS3');
+    const btnD1=document.getElementById('btnD1'), btnD2=document.getElementById('btnD2'), btnD3=document.getElementById('btnD3');
+    function updateButtonStates(){ btnS1.classList.toggle('active',S1.visible); btnS2.classList.toggle('active',S2.visible); btnS3.classList.toggle('active',S3.visible);
+      btnD1.classList.toggle('active',D1.visible); btnD2.classList.toggle('active',D2.visible); btnD3.classList.toggle('active',D3.visible); }
+    function toggleCurveVisibility(curve,btn){ curve.visible=!curve.visible; btn.classList.toggle('active',curve.visible); store.saveState(); renderDiagram(); }
+    btnS1.addEventListener('click',()=>toggleCurveVisibility(S1,btnS1));
+    btnS2.addEventListener('click',()=>toggleCurveVisibility(S2,btnS2));
+    btnS3.addEventListener('click',()=>toggleCurveVisibility(S3,btnS3));
+    btnD1.addEventListener('click',()=>toggleCurveVisibility(D1,btnD1));
+    btnD2.addEventListener('click',()=>toggleCurveVisibility(D2,btnD2));
+    btnD3.addEventListener('click',()=>toggleCurveVisibility(D3,btnD3));
+
+    updateButtonStates();
+    setEqMode('equilibrium');
+    renderDiagram();
+  </script>
 </body>
 </html>
-
