@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <title>Microeconomics - Supply and Demand</title>
+  <!-- silence favicon 404 -->
+  <link rel="icon" href="data:,">
+
   <style>
     body { margin:0; font-family:Arial,sans-serif; user-select:none; display:flex; flex-direction:column; height:100vh; }
     nav { background:#333; color:#fff; padding:10px; text-align:center; }
@@ -21,12 +24,21 @@
     #marginToggle { text-align:center; padding:10px 0; cursor:pointer; background:#ddd; color:#000; border:1px solid #999; border-radius:4px; transition:background-color .2s; user-select:none; }
     #marginToggle:hover { background:#ccc; } #marginToggle:active { background:#bbb; } #marginToggle.active { background:#FFC300; }
 
-    #equilibriumToggle { display:flex; border:1px solid #999; border-radius:4px; overflow:hidden; }
+    #curveToggle, #equilibriumToggle { display:flex; border:1px solid #999; border-radius:4px; overflow:hidden; }
     .curve-control-segment { flex:1; text-align:center; padding:10px 0; cursor:pointer; background:#ddd; color:#000; user-select:none; transition:background-color .2s; }
     .curve-control-segment:not(.active):hover { background:#ccc; }
     .curve-control-segment:not(.active):active { background:#bbb; }
     .curve-control-segment.active { background:#FFC300; }
     .curve-control-segment:not(:last-child) { border-right:1px solid #999; }
+
+    .curve-row { display:flex; width:100%; gap:10px; box-sizing:border-box; }
+    .curve-row button { flex:1 1 0; min-width:0; margin:0; padding:10px 15px; font-size:16px; cursor:pointer; background:#ddd; color:#000; border:1px solid #999; border-radius:4px; transition:background-color .2s; box-sizing:border-box; }
+    .curve-row button:hover { background:#ccc; }
+    .curve-row button:active { background:#bbb; }
+    .curve-row button.active { background:#FFC300; }
+    #curveButtons button.active, #demandButtons button.active { background:#FFC300; }
+
+    .curve-row button .sub { font-size:.70em; vertical-align:-.20em; margin-left:0; }
 
     #canvas-area { flex:1; display:flex; flex-direction:column; margin:20px; gap:10px; }
     #canvas-container { display:flex; justify-content:center; align-items:center; }
@@ -37,7 +49,7 @@
   <nav>
     <h1 style="margin:0">Microeconomics - Supply and Demand</h1>
     <div style="margin-top:6px">
-      <a href="#/">Home</a><span class="spacer">•</span>
+      <a href="#supply-demand">Home</a><span class="spacer">•</span>
       <a href="#/tax">Tax</a><span class="spacer">•</span>
       <a href="#/subsidy">Subsidy</a><span class="spacer">•</span>
       <a href="#/externalities">Externalities</a><span class="spacer">•</span>
@@ -62,13 +74,29 @@
         <button id="btnResetActions" title="Reset curves & price">⟲</button>
       </div>
 
+      <h2>Curve Control</h2>
+      <div id="curveToggle">
+        <div id="toggleShifts" class="curve-control-segment active">Shifts</div>
+        <div id="toggleElasticity" class="curve-control-segment">Elasticity</div>
+      </div>
+
+      <div id="demandButtons" class="curve-row">
+        <button id="btnD1" aria-label="D 1">D<span class="sub">1</span></button>
+        <button id="btnD2" aria-label="D 2">D<span class="sub">2</span></button>
+        <button id="btnD3" aria-label="D 3">D<span class="sub">3</span></button>
+      </div>
+      <div id="curveButtons" class="curve-row">
+        <button id="btnS1" aria-label="S 1">S<span class="sub">1</span></button>
+        <button id="btnS2" aria-label="S 2">S<span class="sub">2</span></button>
+        <button id="btnS3" aria-label="S 3">S<span class="sub">3</span></button>
+      </div>
+
       <h2>Equilibrium Control</h2>
       <div id="equilibriumToggle">
         <div id="toggleEquilibrium" class="curve-control-segment active">Equilibrium</div>
         <div id="toggleDisequilibrium" class="curve-control-segment">Disequilibrium</div>
       </div>
 
-      <!-- Feature panel LIVES INSIDE SIDEBAR -->
       <h2>Feature</h2>
       <div id="feature-panel"></div>
     </div>
@@ -85,17 +113,16 @@
     import { startRouter, onRoute } from './src/app/router.js';
     import { getFeature } from './src/app/features.js';
 
-    /* Core helpers (Milestone A) */
+    /* Core helpers */
     import { clamp, isPointWithinBoundaries, getLineSegmentWithinBounds, computeIntersection } from './src/core/geometry.js';
     import { splitBaseSub } from './src/core/labels.js';
     import { computeBraceRadii, planUnderbrace4QuartersAnchored } from './src/core/brace.js';
 
-    /* State (Milestone B) */
+    /* State */
     import { createHistoryStore } from './src/state/history.js';
     import { reducer, initialState as baseInitial } from './src/state/reducer.js';
     import { visibleSupply, visibleDemand, allCurves } from './src/state/selectors.js';
 
-    /* ------------ app boot ------------ */
     let currentFeature = null;
 
     function mountPanel(feature){
@@ -105,7 +132,6 @@
       if (feature?.panel) feature.panel(slot, store, helpers);
     }
 
-    // --- helper to execute a brace plan from core/brace.js ---
     function executeBracePlan(ctx, plan) {
       const { style, ops } = plan;
       ctx.save();
@@ -126,7 +152,6 @@
       ctx.restore();
     }
 
-    /* ------------ canvas + geometry ------------ */
     const canvas = document.getElementById('diagram');
     const ctx = canvas.getContext('2d');
 
@@ -152,36 +177,15 @@
       return { xLeft:o.xLeft+extra, xRight:o.xRight-extra, yTop:o.yTop+extra, yBottom:o.yBottom-extra };
     }
 
-    /* ------------ helpers passed to features ------------ */
     const helpers = {
-      // geometry & planning
-      clamp,
-      isPointWithinBoundaries,
-      getOuterBoundaries,
-      getEffectiveBoundaries,
-      computeIntersection,
-      computeBraceRadii,
-      planUnderbrace4QuartersAnchored,
-      executeBracePlan,
-      getLineSegmentWithinBounds,
-
-      // drawing utils
-      drawWithSubscript: (ctx2, main, sub, x, y, opts={}) => {
-        // proxy to our local text renderer using the same signature
-        const prev = ctx;
-        return drawWithSubscript(main, sub, x, y, opts);
-      },
-      useEquilibriumDash: (ctx2, w) => { ctx2.setLineDash([15,15]); ctx2.strokeStyle='gray'; ctx2.lineWidth = w ?? (store.getState().textSize/5); },
-
-      // selectors
+      getOuterBoundaries, getEffectiveBoundaries,
+      computeIntersection, computeBraceRadii, planUnderbrace4QuartersAnchored,
+      executeBracePlan, getLineSegmentWithinBounds,
       selectors: { visibleSupply, visibleDemand, allCurves },
-
-      // convenience
       getTextSize: () => store.getState().textSize,
       lineW:       () => store.getState().textSize / 5,
     };
 
-    /* ------------ state seed ------------ */
     const ob = getOuterBoundaries();
     const seed = {
       ...baseInitial,
@@ -202,8 +206,8 @@
     const store = createHistoryStore(reducer, seed);
     const getTextSize = () => store.getState().textSize;
     const lineW = () => store.getState().textSize/5;
+    const isDiseq = () => store.getState().eqMode === 'disequilibrium';
 
-    /* ------------ drawing utilities ------------ */
     const SUBSCRIPT_DEFAULT = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_Q       = { subScale:.70, dropEm:.26, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_CURVE   = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
@@ -279,6 +283,8 @@
       });
     }
 
+    function computeQxAtPrice(y, curve){ if(!curve||!curve.visible||Math.abs(curve.slope)<1e-9) return null; return (y - curve.intercept)/curve.slope; }
+
     function renderPairEquilibriumForSub(S, D, pSubNum, qSubNum){
       const eff=getEffectiveBoundaries(), o=getOuterBoundaries();
       const eq=computeIntersection(S.slope,S.intercept,D.slope,D.intercept);
@@ -319,7 +325,98 @@
     }
     function renderP3Q3Auto(){ const sel=choosePairForP3(); if(!sel) return; renderPairEquilibriumForSub(sel.s, sel.d, 3, 3); }
 
-    /* ------------ main render ------------ */
+    const priceDrag = { dragging:false, hover:false, handleRadius:7 };
+
+    function renderPriceOverlay(show){
+      const isDiseqMode = store.getState().eqMode === 'disequilibrium';
+      if(!isDiseqMode) return;
+
+      const state = store.getState();
+      let yP = state.priceY;
+      const eq = getEquilibriumPoint(state);
+      if(yP == null && eq) yP = eq.y;
+      if(yP == null) return;
+
+      const eff=getEffectiveBoundaries(), o=getOuterBoundaries();
+      const S=visibleSupply(state), D=visibleDemand(state);
+      if(!S||!D) return;
+
+      yP = clamp(yP, eff.yTop, eff.yBottom);
+
+      const xS=computeQxAtPrice(yP,S), xD=computeQxAtPrice(yP,D);
+      const valid=(x)=>x!=null && x>=eff.xLeft && x<=eff.xRight; if(!valid(xS)||!valid(xD)) return;
+
+      const leftAttach = Math.min(xS,xD);
+      const rightAttach= Math.max(xS,xD);
+
+      ctx.save();
+      const hover = priceDrag.hover || priceDrag.dragging;
+      ctx.fillStyle = '#555';
+      ctx.beginPath(); ctx.arc(o.xLeft, yP, priceDrag.handleRadius, 0, 2*Math.PI); ctx.fill();
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth   = hover ? 2.5 : 1.5;
+      ctx.stroke();
+      ctx.restore();
+
+      if(!show) return;
+
+      ctx.save(); useEquilibriumDash(); ctx.lineCap='butt';
+      ctx.beginPath(); ctx.moveTo(o.xLeft, yP); ctx.lineTo(rightAttach, yP); ctx.stroke();
+      ctx.restore();
+
+      drawWithSubscript('P','1', o.xLeft-15, yP, {align:'right', baseline:'middle', ...SUBSCRIPT_DEFAULT});
+
+      ctx.save(); useEquilibriumDash();
+      ctx.beginPath(); ctx.moveTo(xS, yP); ctx.lineTo(xS, o.yBottom); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xD, yP); ctx.lineTo(xD, o.yBottom); ctx.stroke();
+      ctx.restore();
+
+      drawWithSubscript('Q','D', xD, o.yBottom+15, {align:'center', baseline:'top', ...SUBSCRIPT_Q});
+      drawWithSubscript('Q','S', xS, o.yBottom+15, {align:'center', baseline:'top', ...SUBSCRIPT_Q});
+
+      if(Math.abs(xS-xD)>1e-3){
+        ctx.save(); ctx.globalAlpha=.15; ctx.fillStyle=(xS>xD)?'#2a9d8f':'#d62828';
+        ctx.fillRect(leftAttach, yP, rightAttach-leftAttach, o.yBottom-yP); ctx.restore();
+      }
+
+      const textSize = getTextSize();
+      const qLabelTop = o.yBottom + 15;
+      const qLabelH   = textSize;
+      const gapBelow  = Math.max(6, textSize*0.20);
+      const baselineY = qLabelTop + qLabelH + gapBelow;
+
+      const shortage = (xD > xS);
+      const braceColor = shortage ? '#d62828' : '#2a9d8f';
+
+      const L = rightAttach - leftAttach;
+      if (L >= 10) {
+        const radii = computeBraceRadii(L);
+        const clearance = (canvas.height - 6) - baselineY;
+        const needMax = Math.max(radii.rEnd, radii.rMid);
+        if (clearance < needMax) {
+          const k = Math.max(0, clearance) / (needMax || 1);
+          radii.rEnd *= k; radii.rMid *= k;
+        }
+        const plan = planUnderbrace4QuartersAnchored(leftAttach, rightAttach, baselineY, {
+          color: braceColor,
+          lineWidth: Math.max(1.5, textSize/5.5),
+          radii
+        });
+        if (plan) executeBracePlan(ctx, plan);
+
+        const midX = (leftAttach + rightAttach)/2;
+        const label = shortage ? 'Shortage' : 'Surplus';
+        const labelSize = Math.max(10, Math.round(textSize * 0.85));
+        const delta = 0.5 * radii.rEnd;
+        const yTextRaw = (baselineY + delta) + radii.rMid + Math.max(6, textSize*0.25);
+        const yText = Math.min(canvas.height - 6, yTextRaw);
+        ctx.save(); ctx.setLineDash([]); ctx.fillStyle = braceColor;
+        ctx.font = `${labelSize}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(label, midX, yText);
+        ctx.restore();
+      }
+    }
+
     function renderDiagram(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
       drawAxes();
@@ -336,17 +433,14 @@
       });
 
       if(store.getState().eqMode==='equilibrium'){ renderEquilibrium(); renderP2Q2Auto(); renderP3Q3Auto(); }
+      if(isDiseq()){ renderPriceOverlay(priceDrag.dragging || priceDrag.hover); }
 
-      // Let the current feature draw its overlay (e.g., disequilibrium)
-      if (currentFeature?.overlay) {
-        currentFeature.overlay(ctx, store, helpers);
-      }
+      if (currentFeature?.overlay) currentFeature.overlay(ctx, store, helpers);
 
       renderLabels(eff, drawnSegById);
     }
 
-    /* ------------ interaction & UI wiring ------------ */
-    let currentId=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
+    let mode='shift', currentId=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
 
     document.getElementById('btnLarger').addEventListener('click', ()=>{ 
       store.dispatch({ type:'setTextSize', value: getTextSize()+2 }); renderDiagram();
@@ -373,6 +467,10 @@
       updateButtonStates(); setEqMode('equilibrium'); renderDiagram();
     });
 
+    const toggleShifts=document.getElementById('toggleShifts'), toggleElasticity=document.getElementById('toggleElasticity');
+    toggleShifts.addEventListener('click', ()=>{ mode='shift'; toggleShifts.classList.add('active'); toggleElasticity.classList.remove('active'); });
+    toggleElasticity.addEventListener('click', ()=>{ mode='rotate'; toggleElasticity.classList.add('active'); toggleShifts.classList.remove('active'); });
+
     const toggleEquilibrium=document.getElementById('toggleEquilibrium');
     const toggleDisequilibrium=document.getElementById('toggleDisequilibrium');
 
@@ -381,7 +479,7 @@
       toggleEquilibrium.classList.toggle('active',newMode==='equilibrium');
       toggleDisequilibrium.classList.toggle('active',newMode==='disequilibrium');
       if(newMode==='equilibrium'){
-        // nothing else to do here; overlay reads from state
+        priceDrag.dragging=false; 
       }else{
         const s = store.getState();
         if(s.priceY == null){
@@ -396,7 +494,6 @@
     toggleDisequilibrium.addEventListener('click', ()=>setEqMode('disequilibrium'));
 
     const distToCurve = (c, px, py) => Math.abs(c.slope*px - py + c.intercept)/Math.sqrt(c.slope**2+1);
-
     function nearestCurveIdAt(m){
       let cand=null, min=Infinity;
       allCurves(store.getState()).forEach(c=>{
@@ -406,28 +503,21 @@
       return (min<5 && cand) ? cand.id : null;
     }
 
-    function isNearPriceHandle(x,y){
-      if(store.getState().eqMode!=='disequilibrium') return false;
-      const o=getOuterBoundaries(); const yP=store.getState().priceY ?? y;
-      const dx=x-o.xLeft, dy=y-yP; return Math.hypot(dx,dy) <= (7+4);
-    }
-    function isNearPriceLine(x,y){
-      if(store.getState().eqMode!=='disequilibrium') return false;
-      const yP=store.getState().priceY; if(yP==null) return false; return Math.abs(y-yP) < 6;
-    }
+    function isNearPriceHandle(x,y){ if(!isDiseq()) return false; const o=getOuterBoundaries(); const yP=store.getState().priceY ?? y;
+      const dx=x-o.xLeft, dy=y-yP; return Math.hypot(dx,dy) <= (priceDrag.handleRadius+4); }
+    function isNearPriceLine(x,y){ if(!isDiseq()) return false; const yP=store.getState().priceY; if(yP==null) return false; return Math.abs(y-yP) < 6; }
+
+    const canvasEl = canvas; // alias if needed
 
     canvas.addEventListener('mousedown',(e)=>{
       const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
       if(isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y)){
+        priceDrag.dragging=true;
         store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
-        dragging=false; rotating=false; currentId=null;
         renderDiagram(); return;
       }
       const id = nearestCurveIdAt(m);
       if(!id) return;
-
-      // decide mode via feature (default to 'shift' if not provided)
-      const mode = (window.__econModes?.['supply-demand']?.() ?? 'shift');
 
       if(mode==='shift'){ dragging=true; lastMouseX=m.x; currentId=id; }
       else{
@@ -452,37 +542,20 @@
 
     canvas.addEventListener('mousemove',(e)=>{
       const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+      priceDrag.hover = isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y);
+      canvas.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
 
-      if(store.getState().eqMode==='disequilibrium'){
-        const o=getOuterBoundaries(); const yP=store.getState().priceY ?? m.y;
-        const nearHandle = Math.hypot(m.x-o.xLeft, m.y-yP) <= 11;
-        const nearLine = (store.getState().priceY!=null) && Math.abs(m.y - store.getState().priceY) < 6;
-        canvas.style.cursor = (nearHandle || nearLine) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
-
-        if(nearHandle || nearLine) {
-          // visual feedback happens inside overlay; no local state needed
-        }
-      } else {
-        canvas.style.cursor = (dragging||rotating ? 'grabbing' : 'default');
+      if(priceDrag.dragging){
+        store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
+        renderDiagram(); return;
       }
 
-      if(store.getState().eqMode==='disequilibrium' && (canvas.style.cursor==='ns-resize')){
-        // if user drags while over the handle/line
-        if(e.buttons & 1){
-          const y = clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom);
-          store.dispatch({ type:'setPriceY', y });
-          renderDiagram(); 
-          return;
-        }
-      }
-
-      if(dragging && currentId){
+      if(dragging && mode==='shift' && currentId){
         const dx=m.x-lastMouseX; lastMouseX=m.x;
-        const before = store.getState();
         store.dispatch({ type:'shiftCurve', id: currentId, dx });
         if(!getEquilibriumPoint(store.getState())) { store.undo(); }
         renderDiagram();
-      } else if(rotating && currentId && rotationPivot){
+      } else if(rotating && mode==='rotate' && currentId && rotationPivot){
         const dx=m.x-initialMouseX;
         const me = store.getState().curves.find(c=>c.id===currentId);
         const newA=(m.y>rotationPivot.y)?(initialAngle - dx*0.005):(initialAngle + dx*0.005);
@@ -492,16 +565,28 @@
       }
     });
 
-    function stopDrags(){ dragging=false; rotating=false; currentId=null; renderDiagram(); }
+    function stopDrags(){ dragging=false; rotating=false; currentId=null; if(priceDrag.dragging){ priceDrag.dragging=false; } renderDiagram(); }
     canvas.addEventListener('mouseup',stopDrags);
     canvas.addEventListener('mouseleave',stopDrags);
 
-    function updateButtonStates(){
-      // Only margin button lives here now; curve buttons are feature-owned.
-      marginToggle.classList.toggle('active', store.getState().marginEnabled);
-    }
+    const btnS1=document.getElementById('btnS1'), btnS2=document.getElementById('btnS2'), btnS3=document.getElementById('btnS3');
+    const btnD1=document.getElementById('btnD1'), btnD2=document.getElementById('btnD2'), btnD3=document.getElementById('btnD3');
 
-    /* ------------ router wiring ------------ */
+    function updateButtonStates(){
+      const s = store.getState();
+      const v = id => (s.curves.find(c=>c.id===id)||{}).visible;
+      btnS1.classList.toggle('active',v('S1')); btnS2.classList.toggle('active',v('S2')); btnS3.classList.toggle('active',v('S3'));
+      btnD1.classList.toggle('active',v('D1')); btnD2.classList.toggle('active',v('D2')); btnD3.classList.toggle('active',v('D3'));
+      marginToggle.classList.toggle('active', s.marginEnabled);
+    }
+    function toggleCurve(id, btn){ store.dispatch({ type:'toggleCurve', id }); btn.classList.toggle('active'); renderDiagram(); }
+    btnS1.addEventListener('click',()=>toggleCurve('S1',btnS1));
+    btnS2.addEventListener('click',()=>toggleCurve('S2',btnS2));
+    btnS3.addEventListener('click',()=>toggleCurve('S3',btnS3));
+    btnD1.addEventListener('click',()=>toggleCurve('D1',btnD1));
+    btnD2.addEventListener('click',()=>toggleCurve('D2',btnD2));
+    btnD3.addEventListener('click',()=>toggleCurve('D3',btnD3));
+
     onRoute(route => {
       currentFeature = getFeature(route);
       const ob = getOuterBoundaries();
