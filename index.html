@@ -383,6 +383,21 @@
       }
     }
 
+    /* ---------- Interaction state (mode for helpers) ---------- */
+    // Keep mode here so helpers (below) can access it
+    let mode = 'shift';
+
+    /* ---------- Shared helpers for features (panel + overlay) ---------- */
+    const helpers = {
+      getOuterBoundaries, getEffectiveBoundaries,
+      computeIntersection, computeBraceRadii, planUnderbrace4QuartersAnchored,
+      executeBracePlan, getLineSegmentWithinBounds,
+      selectors: { visibleSupply, visibleDemand, allCurves },
+      getTextSize, lineW,
+      setMode: (m) => { mode = (m === 'rotate' ? 'rotate' : 'shift'); },
+      getMode: () => mode,
+    };
+
     /* ---------- Main render ---------- */
     function renderDiagram(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -402,20 +417,15 @@
       if(store.getState().eqMode==='equilibrium'){ renderEquilibrium(); renderP2Q2Auto(); renderP3Q3Auto(); }
       if(isDiseq()){ renderPriceOverlay(priceDrag.dragging || priceDrag.hover); }
 
-      // Feature overlay hook
-      if (currentFeature?.overlay) currentFeature.overlay(ctx, store, {
-        getOuterBoundaries, getEffectiveBoundaries,
-        computeIntersection, computeBraceRadii, planUnderbrace4QuartersAnchored,
-        executeBracePlan, getLineSegmentWithinBounds,
-        selectors: { visibleSupply, visibleDemand, allCurves },
-        getTextSize, lineW
-      });
+      // Feature overlay hook (pass the SAME helpers)
+      if (currentFeature?.overlay) currentFeature.overlay(ctx, store, helpers);
 
       renderLabels(eff, drawnSegById);
     }
 
     /* ---------- Interaction & UI ---------- */
-    let mode='shift', currentId=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
+    // (mode is already defined above for helpers)
+    let currentId=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
 
     document.getElementById('btnLarger').addEventListener('click', ()=>{ 
       store.dispatch({ type:'setTextSize', value: getTextSize()+2 }); renderDiagram();
@@ -550,13 +560,8 @@
       const slot = document.getElementById('feature-panel');
       if (!slot) return;
       slot.innerHTML = '';
-      if (feature?.panel) feature.panel(slot, store, {
-        getOuterBoundaries, getEffectiveBoundaries,
-        computeIntersection, computeBraceRadii, planUnderbrace4QuartersAnchored,
-        executeBracePlan, getLineSegmentWithinBounds,
-        selectors: { visibleSupply, visibleDemand, allCurves },
-        getTextSize, lineW
-      });
+      // pass the SAME helpers to the panel
+      if (feature?.panel) feature.panel(slot, store, helpers);
     }
 
     onRoute(route => {
@@ -577,6 +582,3 @@
   </script>
 </body>
 </html>
-
-
-
