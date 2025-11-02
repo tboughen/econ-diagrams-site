@@ -1,15 +1,23 @@
 // src/app/features.js
-import * as supplyDemand from '../features/supplyDemand/index.js';
-import * as tax from '../features/tax/index.js';
-import * as subsidy from '../features/subsidy/index.js';
-import * as externalities from '../features/externalities/index.js';
+import supplyDemand from '../features/supplydemand/index.js';
+import tax          from '../features/tax/index.js';
+import subsidy      from '../features/subsidy/index.js';
+import externalities from '../features/externalities/index.js';
 
+// Temporary: buffer stocks not built yet → point to supply-demand
 const registry = {
-  [supplyDemand.id]: supplyDemand,
-  [tax.id]: tax,
-  [subsidy.id]: subsidy,
-  [externalities.id]: externalities
+  '':              supplyDemand,
+  'home':          supplyDemand,
+  'supply-demand': supplyDemand,
+
+  'tax':           tax,
+  'subsidy':       subsidy,
+  'externalities': externalities,
+
+  // placeholder until we add a buffer feature
+  'buffer':        supplyDemand
 };
 
-export function getFeature(route){ return registry[route] || supplyDemand; }
-export function routes(){ return Object.keys(registry); }
+export function getFeature(route){
+  return registry[route] || supplyDemand;
+}
