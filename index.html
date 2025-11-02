@@ -150,6 +150,16 @@
       const extra = store.getState().marginEnabled ? 50 : 0;
       return { xLeft:o.xLeft+extra, xRight:o.xRight-extra, yTop:o.yTop+extra, yBottom:o.yBottom-extra };
     }
+    
+    // keep the local 'mode' the canvas uses:
+    let mode = 'shift'; // existing variable already in your file
+    
+    // expose setters/getters to features via helpers:
+    const helpers = {
+      // ...everything you already have here...
+      setMode: (m) => { mode = (m === 'rotate' ? 'rotate' : 'shift'); },
+      getMode: () => mode,
+    };
 
     /* ---------- Store seed ---------- */
     const ob = getOuterBoundaries();
@@ -595,4 +605,5 @@
   </script>
 </body>
 </html>
+
 
