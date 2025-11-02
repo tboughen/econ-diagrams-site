@@ -3,9 +3,6 @@
 <head>
   <meta charset="UTF-8" />
   <title>Microeconomics - Supply and Demand</title>
-  <!-- silence favicon 404 -->
-  <link rel="icon" href="data:,">
-
   <style>
     body { margin:0; font-family:Arial,sans-serif; user-select:none; display:flex; flex-direction:column; height:100vh; }
     nav { background:#333; color:#fff; padding:10px; text-align:center; }
@@ -49,7 +46,7 @@
   <nav>
     <h1 style="margin:0">Microeconomics - Supply and Demand</h1>
     <div style="margin-top:6px">
-      <a href="#supply-demand">Home</a><span class="spacer">•</span>
+      <a href="#/">Home</a><span class="spacer">•</span>
       <a href="#/tax">Tax</a><span class="spacer">•</span>
       <a href="#/subsidy">Subsidy</a><span class="spacer">•</span>
       <a href="#/externalities">Externalities</a><span class="spacer">•</span>
@@ -109,28 +106,25 @@
   </div>
 
   <script type="module">
-    /* Router & feature registry */
+    console.log('[econ] boot');
+
+    // Router & feature registry
     import { startRouter, onRoute } from './src/app/router.js';
     import { getFeature } from './src/app/features.js';
 
-    /* Core helpers */
+    // Core helpers
     import { clamp, isPointWithinBoundaries, getLineSegmentWithinBounds, computeIntersection } from './src/core/geometry.js';
     import { splitBaseSub } from './src/core/labels.js';
     import { computeBraceRadii, planUnderbrace4QuartersAnchored } from './src/core/brace.js';
 
-    /* State */
+    // State
     import { createHistoryStore } from './src/state/history.js';
     import { reducer, initialState as baseInitial } from './src/state/reducer.js';
     import { visibleSupply, visibleDemand, allCurves } from './src/state/selectors.js';
 
-    let currentFeature = null;
-
-    function mountPanel(feature){
-      const slot = document.getElementById('feature-panel');
-      if (!slot) return;
-      slot.innerHTML = '';
-      if (feature?.panel) feature.panel(slot, store, helpers);
-    }
+    /* ---------- Canvas & helpers ---------- */
+    const canvas = document.getElementById('diagram');
+    const ctx = canvas.getContext('2d');
 
     function executeBracePlan(ctx, plan) {
       const { style, ops } = plan;
@@ -151,9 +145,6 @@
       }
       ctx.restore();
     }
-
-    const canvas = document.getElementById('diagram');
-    const ctx = canvas.getContext('2d');
 
     const baseMargin = 70, diagramWidth = 600;
     const DIAGRAM_HEIGHT = 600;
@@ -177,15 +168,7 @@
       return { xLeft:o.xLeft+extra, xRight:o.xRight-extra, yTop:o.yTop+extra, yBottom:o.yBottom-extra };
     }
 
-    const helpers = {
-      getOuterBoundaries, getEffectiveBoundaries,
-      computeIntersection, computeBraceRadii, planUnderbrace4QuartersAnchored,
-      executeBracePlan, getLineSegmentWithinBounds,
-      selectors: { visibleSupply, visibleDemand, allCurves },
-      getTextSize: () => store.getState().textSize,
-      lineW:       () => store.getState().textSize / 5,
-    };
-
+    /* ---------- Store seed ---------- */
     const ob = getOuterBoundaries();
     const seed = {
       ...baseInitial,
@@ -208,15 +191,16 @@
     const lineW = () => store.getState().textSize/5;
     const isDiseq = () => store.getState().eqMode === 'disequilibrium';
 
+    /* ---------- Drawing utilities ---------- */
     const SUBSCRIPT_DEFAULT = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_Q       = { subScale:.70, dropEm:.26, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_CURVE   = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
 
     function drawWithSubscript(main, sub, x, y, {
-      align='left', baseline='alphabetic', subScale=.70, dropEm=.20, kernPx=0, color:'#000'
+      align='left', baseline='alphabetic', subScale=.70, dropEm=.20, kernPx=0, color='#000'
     }={}) {
-      const textSize = getTextSize();
-      const mainSize=textSize, subSize=Math.round(textSize*subScale), drop=Math.round(textSize*dropEm);
+      const ts = getTextSize();
+      const mainSize=ts, subSize=Math.round(ts*subScale), drop=Math.round(ts*dropEm);
       ctx.save(); ctx.textBaseline=baseline;
 
       ctx.font = `${mainSize}px Arial`; const wMain=ctx.measureText(main).width;
@@ -245,11 +229,11 @@
     }
 
     function drawAxes(){
-      const o=getOuterBoundaries(); const textSize = getTextSize();
+      const o=getOuterBoundaries(); const ts = getTextSize();
       ctx.save(); ctx.strokeStyle='black'; ctx.lineWidth=lineW();
       ctx.beginPath(); ctx.moveTo(o.xLeft,o.yBottom); ctx.lineTo(o.xRight,o.yBottom); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(o.xLeft,o.yBottom); ctx.lineTo(o.xLeft,o.yTop); ctx.stroke();
-      ctx.font=`${textSize}px Arial`; ctx.fillStyle='black';
+      ctx.font=`${ts}px Arial`; ctx.fillStyle='black';
       ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillText('Price', o.xLeft-10, o.yTop);
       ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillText('Quantity', o.xRight, o.yBottom+10);
       ctx.restore();
@@ -283,7 +267,8 @@
       });
     }
 
-    function computeQxAtPrice(y, curve){ if(!curve||!curve.visible||Math.abs(curve.slope)<1e-9) return null; return (y - curve.intercept)/curve.slope; }
+    const computeQxAtPrice = (y, curve) =>
+      (!curve||!curve.visible||Math.abs(curve.slope)<1e-9) ? null : (y - curve.intercept)/curve.slope;
 
     function renderPairEquilibriumForSub(S, D, pSubNum, qSubNum){
       const eff=getEffectiveBoundaries(), o=getOuterBoundaries();
@@ -301,11 +286,11 @@
       drawWithSubscript('Q', String(qSubNum), eq.x, o.yBottom+15, {align:'center', baseline:'top', ...SUBSCRIPT_Q});
     }
 
-    function inBoundsPair(S,D){
+    const inBoundsPair = (S,D) => {
       const eff=getEffectiveBoundaries();
       const eq=computeIntersection(S.slope,S.intercept,D.slope,D.intercept);
       return eq && isPointWithinBoundaries(eq,eff);
-    }
+    };
 
     function renderP2Q2Auto(){
       const s = store.getState();
@@ -323,13 +308,13 @@
       for(const [a,b] of cand){ if(a&&b&&a.visible&&b.visible&&inBoundsPair(a,b)) return {s:a,d:b}; }
       return null;
     }
-    function renderP3Q3Auto(){ const sel=choosePairForP3(); if(!sel) return; renderPairEquilibriumForSub(sel.s, sel.d, 3, 3); }
+    const renderP3Q3Auto = () => { const sel=choosePairForP3(); if(sel) renderPairEquilibriumForSub(sel.s, sel.d, 3, 3); };
 
+    /* ---------- Disequilibrium overlay ---------- */
     const priceDrag = { dragging:false, hover:false, handleRadius:7 };
 
     function renderPriceOverlay(show){
-      const isDiseqMode = store.getState().eqMode === 'disequilibrium';
-      if(!isDiseqMode) return;
+      if(!isDiseq()) return;
 
       const state = store.getState();
       let yP = state.priceY;
@@ -379,10 +364,10 @@
         ctx.fillRect(leftAttach, yP, rightAttach-leftAttach, o.yBottom-yP); ctx.restore();
       }
 
-      const textSize = getTextSize();
+      const ts = getTextSize();
       const qLabelTop = o.yBottom + 15;
-      const qLabelH   = textSize;
-      const gapBelow  = Math.max(6, textSize*0.20);
+      const qLabelH   = ts;
+      const gapBelow  = Math.max(6, ts*0.20);
       const baselineY = qLabelTop + qLabelH + gapBelow;
 
       const shortage = (xD > xS);
@@ -399,16 +384,16 @@
         }
         const plan = planUnderbrace4QuartersAnchored(leftAttach, rightAttach, baselineY, {
           color: braceColor,
-          lineWidth: Math.max(1.5, textSize/5.5),
+          lineWidth: Math.max(1.5, ts/5.5),
           radii
         });
         if (plan) executeBracePlan(ctx, plan);
 
         const midX = (leftAttach + rightAttach)/2;
         const label = shortage ? 'Shortage' : 'Surplus';
-        const labelSize = Math.max(10, Math.round(textSize * 0.85));
+        const labelSize = Math.max(10, Math.round(ts * 0.85));
         const delta = 0.5 * radii.rEnd;
-        const yTextRaw = (baselineY + delta) + radii.rMid + Math.max(6, textSize*0.25);
+        const yTextRaw = (baselineY + delta) + radii.rMid + Math.max(6, ts*0.25);
         const yText = Math.min(canvas.height - 6, yTextRaw);
         ctx.save(); ctx.setLineDash([]); ctx.fillStyle = braceColor;
         ctx.font = `${labelSize}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
@@ -417,6 +402,7 @@
       }
     }
 
+    /* ---------- Main render ---------- */
     function renderDiagram(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
       drawAxes();
@@ -435,11 +421,19 @@
       if(store.getState().eqMode==='equilibrium'){ renderEquilibrium(); renderP2Q2Auto(); renderP3Q3Auto(); }
       if(isDiseq()){ renderPriceOverlay(priceDrag.dragging || priceDrag.hover); }
 
-      if (currentFeature?.overlay) currentFeature.overlay(ctx, store, helpers);
+      // Feature overlay hook
+      if (currentFeature?.overlay) currentFeature.overlay(ctx, store, {
+        getOuterBoundaries, getEffectiveBoundaries,
+        computeIntersection, computeBraceRadii, planUnderbrace4QuartersAnchored,
+        executeBracePlan, getLineSegmentWithinBounds,
+        selectors: { visibleSupply, visibleDemand, allCurves },
+        getTextSize, lineW
+      });
 
       renderLabels(eff, drawnSegById);
     }
 
+    /* ---------- Interaction & UI ---------- */
     let mode='shift', currentId=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
 
     document.getElementById('btnLarger').addEventListener('click', ()=>{ 
@@ -479,7 +473,7 @@
       toggleEquilibrium.classList.toggle('active',newMode==='equilibrium');
       toggleDisequilibrium.classList.toggle('active',newMode==='disequilibrium');
       if(newMode==='equilibrium'){
-        priceDrag.dragging=false; 
+        priceDrag.dragging=false;
       }else{
         const s = store.getState();
         if(s.priceY == null){
@@ -506,8 +500,6 @@
     function isNearPriceHandle(x,y){ if(!isDiseq()) return false; const o=getOuterBoundaries(); const yP=store.getState().priceY ?? y;
       const dx=x-o.xLeft, dy=y-yP; return Math.hypot(dx,dy) <= (priceDrag.handleRadius+4); }
     function isNearPriceLine(x,y){ if(!isDiseq()) return false; const yP=store.getState().priceY; if(yP==null) return false; return Math.abs(y-yP) < 6; }
-
-    const canvasEl = canvas; // alias if needed
 
     canvas.addEventListener('mousedown',(e)=>{
       const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
@@ -587,6 +579,21 @@
     btnD2.addEventListener('click',()=>toggleCurve('D2',btnD2));
     btnD3.addEventListener('click',()=>toggleCurve('D3',btnD3));
 
+    /* ---------- Router wiring ---------- */
+    let currentFeature = null;
+    function mountPanel(feature){
+      const slot = document.getElementById('feature-panel');
+      if (!slot) return;
+      slot.innerHTML = '';
+      if (feature?.panel) feature.panel(slot, store, {
+        getOuterBoundaries, getEffectiveBoundaries,
+        computeIntersection, computeBraceRadii, planUnderbrace4QuartersAnchored,
+        executeBracePlan, getLineSegmentWithinBounds,
+        selectors: { visibleSupply, visibleDemand, allCurves },
+        getTextSize, lineW
+      });
+    }
+
     onRoute(route => {
       currentFeature = getFeature(route);
       const ob = getOuterBoundaries();
@@ -597,6 +604,8 @@
       }
       mountPanel(currentFeature);
       updateButtonStates();
+      // default to equilibrium on route change
+      store.dispatch({ type:'setEqMode', mode:'equilibrium' });
       renderDiagram();
     });
     startRouter();
