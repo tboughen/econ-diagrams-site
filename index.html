@@ -170,23 +170,30 @@
     const SUBSCRIPT_Q       = { subScale:.70, dropEm:.26, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_CURVE   = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
 
-    function drawWithSubscript(main, sub, x, y, {
-      align='left', baseline='alphabetic', subScale=.70, dropEm=.20, kernPx=0, color:'#000'
-    }={}) {
+    function drawWithSubscript(main, sub, x, y, options) {
+      const {
+        align = 'left',
+        baseline = 'alphabetic',
+        subScale = 0.70,
+        dropEm = 0.20,
+        kernPx = 0,
+        color = '#000'
+      } = options || {};
+    
       const ts = getTextSize();
-      const mainSize=ts, subSize=Math.round(ts*subScale), drop=Math.round(ts*dropEm);
-      ctx.save(); ctx.textBaseline=baseline;
-
-      ctx.font = `${mainSize}px Arial`; const wMain=ctx.measureText(main).width;
-      ctx.font = `${subSize}px Arial`;  const wSub =ctx.measureText(sub).width;
+      const mainSize = ts, subSize = Math.round(ts * subScale), drop = Math.round(ts * dropEm);
+      ctx.save(); ctx.textBaseline = baseline;
+    
+      ctx.font = `${mainSize}px Arial`; const wMain = ctx.measureText(main).width;
+      ctx.font = `${subSize}px Arial`;  const wSub  = ctx.measureText(sub).width;
       const total = wMain + kernPx + wSub;
-
-      let startX=x;
-      if(align==='center') startX=x-total/2;
-      else if(align==='right') startX=x-total;
-
-      ctx.font = `${mainSize}px Arial`; ctx.fillStyle=color; ctx.fillText(main,startX,y);
-      ctx.font = `${subSize}px Arial`;  ctx.fillStyle=color; ctx.fillText(sub, startX+wMain+kernPx, y+drop);
+    
+      let startX = x;
+      if (align === 'center') startX = x - total / 2;
+      else if (align === 'right') startX = x - total;
+    
+      ctx.font = `${mainSize}px Arial`; ctx.fillStyle = color; ctx.fillText(main, startX, y);
+      ctx.font = `${subSize}px Arial`;  ctx.fillStyle = color; ctx.fillText(sub, startX + wMain + kernPx, y + drop);
       ctx.restore();
     }
 
@@ -570,3 +577,4 @@
   </script>
 </body>
 </html>
+
