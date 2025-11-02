@@ -5,7 +5,7 @@ export function onRoute(fn){ listeners.add(fn); return () => listeners.delete(fn
 
 export function currentRoute(){
   const raw = location.hash.replace(/^#/, '');
-  const cleaned = raw.replace(/^\/+/, ''); // <-- strip any leading slashes
+  const cleaned = raw.replace(/^\/+/, ''); // allow #/tax as well as #tax
   return cleaned || 'supply-demand';
 }
 
