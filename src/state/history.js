@@ -1,29 +1,47 @@
-// Generic undo/redo store over a reducer
-export function createHistoryStore(reducer, initial) {
+// src/state/history.js
+export function createHistoryStore(reducer, initialState){
+  let state = initialState;
   const past = [];
-  let present = initial;
   const future = [];
+  const listeners = new Set();
 
-  return {
-    getState: () => present,
-    dispatch: (action) => {
-      const next = reducer(present, action);
-      if (next !== present) {
-        past.push(present);
-        present = next;
-        future.length = 0;
-      }
-    },
-    undo: () => {
-      if (!past.length) return;
-      future.push(present);
-      present = past.pop();
-    },
-    redo: () => {
-      if (!future.length) return;
-      past.push(present);
-      present = future.pop();
-    },
-    reset: (to) => { past.length = 0; future.length = 0; present = to; }
-  };
+  function notify(){ listeners.forEach(fn => fn(state)); }
+
+  function getState(){ return state; }
+  function dispatch(action){
+    const prev = state;
+    const next = reducer(state, action);
+    if (next !== prev){
+      past.push(prev);
+      state = next;
+      future.length = 0;
+      notify();
+    }
+  }
+  function reset(newState){
+    state = newState;
+    past.length = 0;
+    future.length = 0;
+    notify();
+  }
+  function undo(){
+    if (past.length){
+      future.push(state);
+      state = past.pop();
+      notify();
+    }
+  }
+  function redo(){
+    if (future.length){
+      past.push(state);
+      state = future.pop();
+      notify();
+    }
+  }
+  function subscribe(fn){
+    listeners.add(fn);
+    return () => listeners.delete(fn);
+  }
+
+  return { getState, dispatch, reset, undo, redo, subscribe };
 }
