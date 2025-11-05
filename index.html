@@ -401,7 +401,6 @@
     }
 
     /* ---------- Interaction state (mode for helpers) ---------- */
-    // Keep mode here so helpers (below) can access it
     let mode = 'shift';
 
     /* ---------- Shared helpers for features (panel + overlay) ---------- */
@@ -473,16 +472,21 @@
     btnRedo.addEventListener('click', ()=>{ store.redo(); });
     btnResetActions.addEventListener('click', ()=>{
       store.reset(seed);
-      setEqMode('equilibrium');
+      // no need to setEqMode here; seed is already equilibrium
     });
 
     const toggleEquilibrium=document.getElementById('toggleEquilibrium');
     const toggleDisequilibrium=document.getElementById('toggleDisequilibrium');
 
     function setEqMode(newMode){
+      const prev = store.getState().eqMode;
+      // Update UI classes regardless (in case of route/panel rebuild)
+      toggleEquilibrium.classList.toggle('active', newMode==='equilibrium');
+      toggleDisequilibrium.classList.toggle('active', newMode==='disequilibrium');
+
+      if (prev === newMode) return; // avoid redundant history entries
+
       store.dispatch({ type:'setEqMode', mode:newMode });
-      toggleEquilibrium.classList.toggle('active',newMode==='equilibrium');
-      toggleDisequilibrium.classList.toggle('active',newMode==='disequilibrium');
       if(newMode==='equilibrium'){
         priceDrag.dragging=false;
       }else{
@@ -603,8 +607,7 @@
         store.reset(seed);
       }
       mountPanel(currentFeature);
-      // default to equilibrium on route change
-      setEqMode('equilibrium');
+      // Do NOT force setEqMode here; seed is already equilibrium
     });
     startRouter();
   </script>
