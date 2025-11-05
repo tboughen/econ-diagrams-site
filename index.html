@@ -28,6 +28,18 @@
     .curve-control-segment.active { background:#FFC300; }
     .curve-control-segment:not(:last-child) { border-right:1px solid #999; }
 
+    /* === Restored styles for feature curve rows/buttons === */
+    .curve-row { display:flex; width:100%; gap:10px; box-sizing:border-box; }
+    .curve-row button { 
+      flex:1 1 0; min-width:0; margin:0; padding:10px 15px; font-size:16px; 
+      cursor:pointer; background:#ddd; color:#000; border:1px solid #999; 
+      border-radius:4px; transition:background-color .2s; box-sizing:border-box;
+    }
+    .curve-row button:hover { background:#ccc; }
+    .curve-row button:active { background:#bbb; }
+    .curve-row button.active { background:#FFC300; }
+    .curve-row button .sub { font-size:.70em; vertical-align:-.20em; margin-left:0; }
+
     #canvas-area { flex:1; display:flex; flex-direction:column; margin:20px; gap:10px; }
     #canvas-container { display:flex; justify-content:center; align-items:center; }
     canvas { border:1px solid #ccc; }
@@ -396,6 +408,8 @@
       getTextSize, lineW,
       setMode: (m) => { mode = (m === 'rotate' ? 'rotate' : 'shift'); },
       getMode: () => mode,
+      // Optional hook: panels can force a repaint right after they dispatch
+      requestRender: () => renderDiagram()
     };
 
     /* ---------- Main render ---------- */
@@ -422,6 +436,9 @@
 
       renderLabels(eff, drawnSegById);
     }
+
+    /* ---------- Repaint on every store change ---------- */
+    store.subscribe(() => renderDiagram());
 
     /* ---------- Interaction & UI ---------- */
     // (mode is already defined above for helpers)
@@ -503,7 +520,7 @@
         rotating=true; initialMouseX=m.x; currentId=id;
         const s=store.getState();
         let pivot=null;
-        const me = s.curves.find(c=>c.id===id);
+        const me = s.curves.find(c=>c.id===currentId);
         const other = (me.kind==='supply') ? visibleDemand(s) : visibleSupply(s);
         if(other){
           const p=computeIntersection(me.slope,me.intercept, other.slope,other.intercept);
