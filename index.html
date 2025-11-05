@@ -28,7 +28,7 @@
     .curve-control-segment.active { background:#FFC300; }
     .curve-control-segment:not(:last-child) { border-right:1px solid #999; }
 
-    /* === Restored styles for feature curve rows/buttons === */
+    /* === Feature curve rows/buttons (panel) === */
     .curve-row { display:flex; width:100%; gap:10px; box-sizing:border-box; }
     .curve-row button { 
       flex:1 1 0; min-width:0; margin:0; padding:10px 15px; font-size:16px; 
@@ -173,6 +173,11 @@
     };
 
     const store = createHistoryStore(reducer, seed);
+
+    // Batch helpers (for single-step undo per drag/rotate/price-drag)
+    const beginBatch = () => store.dispatch({ type: '__history_beginBatch' });
+    const endBatch   = () => store.dispatch({ type: '__history_endBatch' });
+
     const getTextSize = () => store.getState().textSize;
     const lineW = () => store.getState().textSize/5;
     const isDiseq = () => store.getState().eqMode === 'disequilibrium';
@@ -438,35 +443,37 @@
     }
 
     /* ---------- Repaint on every store change ---------- */
-    store.subscribe(() => renderDiagram());
+    store.subscribe(() => {
+      renderDiagram();
+      // keep margin button's active state in sync (undo/redo can change it)
+      const s = store.getState();
+      marginToggle.classList.toggle('active', s.marginEnabled);
+    });
 
     /* ---------- Interaction & UI ---------- */
-    // (mode is already defined above for helpers)
     let currentId=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
 
     document.getElementById('btnLarger').addEventListener('click', ()=>{ 
-      store.dispatch({ type:'setTextSize', value: getTextSize()+2 }); renderDiagram();
+      store.dispatch({ type:'setTextSize', value: getTextSize()+2 });
     });
     document.getElementById('btnSmaller').addEventListener('click', ()=>{ 
-      store.dispatch({ type:'setTextSize', value: Math.max(10, getTextSize()-2) }); renderDiagram();
+      store.dispatch({ type:'setTextSize', value: Math.max(10, getTextSize()-2) });
     });
     document.getElementById('btnReset').addEventListener('click', ()=>{ 
-      store.dispatch({ type:'setTextSize', value: 20 }); renderDiagram();
+      store.dispatch({ type:'setTextSize', value: 20 });
     });
 
     const marginToggle=document.getElementById('marginToggle');
     marginToggle.addEventListener('click', ()=>{ 
       store.dispatch({ type:'toggleMargin' }); 
-      marginToggle.classList.toggle('active', store.getState().marginEnabled); 
-      renderDiagram(); 
     });
 
     const btnUndo=document.getElementById('btnUndo'), btnRedo=document.getElementById('btnRedo'), btnResetActions=document.getElementById('btnResetActions');
-    btnUndo.addEventListener('click', ()=>{ store.undo(); renderDiagram(); });
-    btnRedo.addEventListener('click', ()=>{ store.redo(); renderDiagram(); });
+    btnUndo.addEventListener('click', ()=>{ store.undo(); });
+    btnRedo.addEventListener('click', ()=>{ store.redo(); });
     btnResetActions.addEventListener('click', ()=>{
       store.reset(seed);
-      updateButtonStates(); setEqMode('equilibrium'); renderDiagram();
+      setEqMode('equilibrium');
     });
 
     const toggleEquilibrium=document.getElementById('toggleEquilibrium');
@@ -486,7 +493,6 @@
           store.dispatch({ type:'setPriceY', y: eq ? eq.y : fallback });
         }
       }
-      renderDiagram();
     }
     toggleEquilibrium.addEventListener('click', ()=>setEqMode('equilibrium'));
     toggleDisequilibrium.addEventListener('click', ()=>setEqMode('disequilibrium'));
@@ -507,16 +513,24 @@
 
     canvas.addEventListener('mousedown',(e)=>{
       const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+
+      // Price drag start
       if(isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y)){
         priceDrag.dragging=true;
+        beginBatch(); // batch the whole price drag
         store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
-        renderDiagram(); return;
+        return;
       }
+
       const id = nearestCurveIdAt(m);
       if(!id) return;
 
-      if(mode==='shift'){ dragging=true; lastMouseX=m.x; currentId=id; }
-      else{
+      if(mode==='shift'){ 
+        // Curve shift drag start
+        dragging=true; lastMouseX=m.x; currentId=id; 
+        beginBatch(); // batch the whole shift
+      } else {
+        // Curve rotate start
         rotating=true; initialMouseX=m.x; currentId=id;
         const s=store.getState();
         let pivot=null;
@@ -533,6 +547,7 @@
           pivot = seg ? {x:(seg[0].x+seg[1].x)/2, y:(seg[0].y+seg[1].y)/2} : {x:(eff.xLeft+eff.xRight)/2, y:(eff.yTop+eff.yBottom)/2};
         }
         rotationPivot=pivot; initialAngle=Math.atan(me.slope);
+        beginBatch(); // batch the whole rotate
       }
     });
 
@@ -543,33 +558,30 @@
 
       if(priceDrag.dragging){
         store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
-        renderDiagram(); return;
+        return;
       }
 
       if(dragging && mode==='shift' && currentId){
         const dx=m.x-lastMouseX; lastMouseX=m.x;
         store.dispatch({ type:'shiftCurve', id: currentId, dx });
         if(!getEquilibriumPoint(store.getState())) { store.undo(); }
-        renderDiagram();
       } else if(rotating && mode==='rotate' && currentId && rotationPivot){
         const dx=m.x-initialMouseX;
         const me = store.getState().curves.find(c=>c.id===currentId);
         const newA=(m.y>rotationPivot.y)?(initialAngle - dx*0.005):(initialAngle + dx*0.005);
         store.dispatch({ type:'rotateCurve', id: currentId, angle:newA, pivot:rotationPivot });
         if(!getEquilibriumPoint(store.getState())) { store.undo(); }
-        renderDiagram();
       }
     });
 
-    function stopDrags(){ dragging=false; rotating=false; currentId=null; if(priceDrag.dragging){ priceDrag.dragging=false; } renderDiagram(); }
+    function stopDrags(){ 
+      const hadDrag = priceDrag.dragging || dragging || rotating;
+      dragging=false; rotating=false; currentId=null; 
+      if(priceDrag.dragging){ priceDrag.dragging=false; }
+      if(hadDrag) endBatch(); // finalize single history entry
+    }
     canvas.addEventListener('mouseup',stopDrags);
     canvas.addEventListener('mouseleave',stopDrags);
-
-    // With controls now rendered by the feature module, index.html only toggles margin.
-    function updateButtonStates(){
-      const s = store.getState();
-      marginToggle.classList.toggle('active', s.marginEnabled);
-    }
 
     /* ---------- Router wiring ---------- */
     let currentFeature = null;
@@ -591,9 +603,8 @@
         store.reset(seed);
       }
       mountPanel(currentFeature);
-      updateButtonStates();
-      store.dispatch({ type:'setEqMode', mode:'equilibrium' });
-      renderDiagram();
+      // default to equilibrium on route change
+      setEqMode('equilibrium');
     });
     startRouter();
   </script>
