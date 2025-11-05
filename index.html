@@ -30,9 +30,9 @@
 
     /* === Feature curve rows/buttons (panel) === */
     .curve-row { display:flex; width:100%; gap:10px; box-sizing:border-box; }
-    .curve-row button { 
-      flex:1 1 0; min-width:0; margin:0; padding:10px 15px; font-size:16px; 
-      cursor:pointer; background:#ddd; color:#000; border:1px solid #999; 
+    .curve-row button {
+      flex:1 1 0; min-width:0; margin:0; padding:10px 15px; font-size:16px;
+      cursor:pointer; background:#ddd; color:#000; border:1px solid #999;
       border-radius:4px; transition:background-color .2s; box-sizing:border-box;
     }
     .curve-row button:hover { background:#ccc; }
@@ -94,7 +94,7 @@
   <script type="module">
     console.log('[econ] boot');
 
-    // Router & feature registry 
+    // Router & feature registry
     import { startRouter, onRoute } from './src/app/router.js';
     import { getFeature } from './src/app/features.js';
 
@@ -182,6 +182,10 @@
     const lineW = () => store.getState().textSize/5;
     const isDiseq = () => store.getState().eqMode === 'disequilibrium';
 
+    // Utility: shallow JSON snapshot equality (good enough for our small state)
+    const snap = (s) => JSON.stringify(s);
+    const nearlyEqual = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
+
     /* ---------- Drawing utilities ---------- */
     const SUBSCRIPT_DEFAULT = { subScale:.70, dropEm:.20, kernPx:-.5, color:'#000' };
     const SUBSCRIPT_Q       = { subScale:.70, dropEm:.26, kernPx:-.5, color:'#000' };
@@ -196,19 +200,19 @@
         kernPx = 0,
         color = '#000'
       } = options || {};
-    
+
       const ts = getTextSize();
       const mainSize = ts, subSize = Math.round(ts * subScale), drop = Math.round(ts * dropEm);
       ctx.save(); ctx.textBaseline = baseline;
-    
+
       ctx.font = `${mainSize}px Arial`; const wMain = ctx.measureText(main).width;
       ctx.font = `${subSize}px Arial`;  const wSub  = ctx.measureText(sub).width;
       const total = wMain + kernPx + wSub;
-    
+
       let startX = x;
       if (align === 'center') startX = x - total / 2;
       else if (align === 'right') startX = x - total;
-    
+
       ctx.font = `${mainSize}px Arial`; ctx.fillStyle = color; ctx.fillText(main, startX, y);
       ctx.font = `${subSize}px Arial`;  ctx.fillStyle = color; ctx.fillText(sub, startX + wMain + kernPx, y + drop);
       ctx.restore();
@@ -412,7 +416,6 @@
       getTextSize, lineW,
       setMode: (m) => { mode = (m === 'rotate' ? 'rotate' : 'shift'); },
       getMode: () => mode,
-      // Optional hook: panels can force a repaint right after they dispatch
       requestRender: () => renderDiagram()
     };
 
@@ -435,7 +438,6 @@
       if(store.getState().eqMode==='equilibrium'){ renderEquilibrium(); renderP2Q2Auto(); renderP3Q3Auto(); }
       if(isDiseq()){ renderPriceOverlay(priceDrag.dragging || priceDrag.hover); }
 
-      // Feature overlay hook (pass the SAME helpers)
       if (currentFeature?.overlay) currentFeature.overlay(ctx, store, helpers);
 
       renderLabels(eff, drawnSegById);
@@ -444,7 +446,6 @@
     /* ---------- Repaint on every store change ---------- */
     store.subscribe(() => {
       renderDiagram();
-      // keep margin button's active state in sync (undo/redo can change it)
       const s = store.getState();
       marginToggle.classList.toggle('active', s.marginEnabled);
     });
@@ -452,27 +453,30 @@
     /* ---------- Interaction & UI ---------- */
     let currentId=null, dragging=false, rotating=false, lastMouseX=0, initialMouseX=0, rotationPivot=null, initialAngle=null;
 
-    document.getElementById('btnLarger').addEventListener('click', ()=>{ 
-      store.dispatch({ type:'setTextSize', value: getTextSize()+2 });
+    // Guarded text-size changes (no-ops avoided)
+    document.getElementById('btnLarger').addEventListener('click', ()=>{
+      const v = getTextSize()+2;
+      if (v !== getTextSize()) store.dispatch({ type:'setTextSize', value:v });
     });
-    document.getElementById('btnSmaller').addEventListener('click', ()=>{ 
-      store.dispatch({ type:'setTextSize', value: Math.max(10, getTextSize()-2) });
+    document.getElementById('btnSmaller').addEventListener('click', ()=>{
+      const v = Math.max(10, getTextSize()-2);
+      if (v !== getTextSize()) store.dispatch({ type:'setTextSize', value:v });
     });
-    document.getElementById('btnReset').addEventListener('click', ()=>{ 
-      store.dispatch({ type:'setTextSize', value: 20 });
+    document.getElementById('btnReset').addEventListener('click', ()=>{
+      if (getTextSize() !== 20) store.dispatch({ type:'setTextSize', value:20 });
     });
 
     const marginToggle=document.getElementById('marginToggle');
-    marginToggle.addEventListener('click', ()=>{ 
-      store.dispatch({ type:'toggleMargin' }); 
+    marginToggle.addEventListener('click', ()=>{
+      // reducer should toggle; no-op is unlikely, so just dispatch
+      store.dispatch({ type:'toggleMargin' });
     });
 
     const btnUndo=document.getElementById('btnUndo'), btnRedo=document.getElementById('btnRedo'), btnResetActions=document.getElementById('btnResetActions');
     btnUndo.addEventListener('click', ()=>{ store.undo(); });
     btnRedo.addEventListener('click', ()=>{ store.redo(); });
     btnResetActions.addEventListener('click', ()=>{
-      store.reset(seed);
-      // no need to setEqMode here; seed is already equilibrium
+      store.reset(seed); // treat as new baseline; history.js should replace/clear appropriately
     });
 
     const toggleEquilibrium=document.getElementById('toggleEquilibrium');
@@ -480,10 +484,9 @@
 
     function setEqMode(newMode){
       const prev = store.getState().eqMode;
-      // Update UI classes regardless (in case of route/panel rebuild)
+      // Always sync UI classes
       toggleEquilibrium.classList.toggle('active', newMode==='equilibrium');
       toggleDisequilibrium.classList.toggle('active', newMode==='disequilibrium');
-
       if (prev === newMode) return; // avoid redundant history entries
 
       store.dispatch({ type:'setEqMode', mode:newMode });
@@ -494,7 +497,10 @@
         if(s.priceY == null){
           const eq = getEquilibriumPoint(s);
           const fallback = getEffectiveBoundaries().yTop + 40;
-          store.dispatch({ type:'setPriceY', y: eq ? eq.y : fallback });
+          const y = eq ? eq.y : fallback;
+          if (!nearlyEqual(s.priceY ?? NaN, y)) {
+            store.dispatch({ type:'setPriceY', y });
+          }
         }
       }
     }
@@ -511,9 +517,21 @@
       return (min<5 && cand) ? cand.id : null;
     }
 
-    function isNearPriceHandle(x,y){ if(!isDiseq()) return false; const o=getOuterBoundaries(); const yP=store.getState().priceY ?? y;
-      const dx=x-o.xLeft, dy=y-yP; return Math.hypot(dx,dy) <= (priceDrag.handleRadius+4); }
-    function isNearPriceLine(x,y){ if(!isDiseq()) return false; const yP=store.getState().priceY; if(yP==null) return false; return Math.abs(y-yP) < 6; }
+    function isNearPriceHandle(x,y){
+      if(!isDiseq()) return false;
+      const o=getOuterBoundaries(); const yP=store.getState().priceY ?? y;
+      const dx=x-o.xLeft, dy=y-yP; return Math.hypot(dx,dy) <= (priceDrag.handleRadius+4);
+    }
+    function isNearPriceLine(x,y){
+      if(!isDiseq()) return false;
+      const yP=store.getState().priceY;
+      if(yP==null) return false;
+      return Math.abs(y-yP) < 6;
+    }
+
+    // Per-batch snapshot to discard empty drags
+    let batchActive = false;
+    let preBatchSnap = null;
 
     canvas.addEventListener('mousedown',(e)=>{
       const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
@@ -521,20 +539,26 @@
       // Price drag start
       if(isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y)){
         priceDrag.dragging=true;
-        beginBatch(); // batch the whole price drag
-        store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
+        preBatchSnap = snap(store.getState());
+        beginBatch(); batchActive = true;
+        const y = clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom);
+        const curY = store.getState().priceY;
+        if (!nearlyEqual((curY==null?NaN:curY), y)) {
+          store.dispatch({ type:'setPriceY', y });
+        }
         return;
       }
 
       const id = nearestCurveIdAt(m);
       if(!id) return;
 
-      if(mode==='shift'){ 
-        // Curve shift drag start
-        dragging=true; lastMouseX=m.x; currentId=id; 
-        beginBatch(); // batch the whole shift
+      preBatchSnap = snap(store.getState());
+      beginBatch(); batchActive = true;
+
+      if(mode==='shift'){
+        dragging=true; lastMouseX=m.x; currentId=id;
       } else {
-        // Curve rotate start
+        // rotate
         rotating=true; initialMouseX=m.x; currentId=id;
         const s=store.getState();
         let pivot=null;
@@ -551,7 +575,6 @@
           pivot = seg ? {x:(seg[0].x+seg[1].x)/2, y:(seg[0].y+seg[1].y)/2} : {x:(eff.xLeft+eff.xRight)/2, y:(eff.yTop+eff.yBottom)/2};
         }
         rotationPivot=pivot; initialAngle=Math.atan(me.slope);
-        beginBatch(); // batch the whole rotate
       }
     });
 
@@ -561,28 +584,47 @@
       canvas.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
 
       if(priceDrag.dragging){
-        store.dispatch({ type:'setPriceY', y: clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom) });
+        const y = clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom);
+        const curY = store.getState().priceY;
+        if (!nearlyEqual((curY==null?NaN:curY), y)) {
+          store.dispatch({ type:'setPriceY', y });
+        }
         return;
       }
 
       if(dragging && mode==='shift' && currentId){
-        const dx=m.x-lastMouseX; lastMouseX=m.x;
+        const dx=m.x-lastMouseX;
+        if (dx===0) return; // avoid no-op entries
+        lastMouseX=m.x;
         store.dispatch({ type:'shiftCurve', id: currentId, dx });
         if(!getEquilibriumPoint(store.getState())) { store.undo(); }
       } else if(rotating && mode==='rotate' && currentId && rotationPivot){
         const dx=m.x-initialMouseX;
+        if (dx===0) return; // avoid no-op entries
         const me = store.getState().curves.find(c=>c.id===currentId);
-        const newA=(m.y>rotationPivot.y)?(initialAngle - dx*0.005):(initialAngle + dx*0.005);
+        let newA=(m.y>rotationPivot.y)?(initialAngle - dx*0.005):(initialAngle + dx*0.005);
+        const curA = Math.atan(me.slope);
+        if (nearlyEqual(curA, newA, 1e-4)) return; // ignore tiny/no change
         store.dispatch({ type:'rotateCurve', id: currentId, angle:newA, pivot:rotationPivot });
         if(!getEquilibriumPoint(store.getState())) { store.undo(); }
       }
     });
 
-    function stopDrags(){ 
+    function stopDrags(){
       const hadDrag = priceDrag.dragging || dragging || rotating;
-      dragging=false; rotating=false; currentId=null; 
+      dragging=false; rotating=false; currentId=null;
       if(priceDrag.dragging){ priceDrag.dragging=false; }
-      if(hadDrag) endBatch(); // finalize single history entry
+
+      if (hadDrag && batchActive) {
+        endBatch();
+        batchActive = false;
+        const post = snap(store.getState());
+        if (post === preBatchSnap) {
+          // Batch caused no net change; drop the redundant history entry
+          store.undo();
+        }
+        preBatchSnap = null;
+      }
     }
     canvas.addEventListener('mouseup',stopDrags);
     canvas.addEventListener('mouseleave',stopDrags);
@@ -593,7 +635,6 @@
       const slot = document.getElementById('feature-panel');
       if (!slot) return;
       slot.innerHTML = '';
-      // pass the SAME helpers to the panel
       if (feature?.panel) feature.panel(slot, store, helpers);
     }
 
@@ -602,12 +643,12 @@
       const ob = getOuterBoundaries();
       if (currentFeature?.initialSeed) {
         const next = currentFeature.initialSeed(ob);
-        if (next) store.reset(next); else store.reset(seed);
+        store.reset(next || seed);
       } else {
         store.reset(seed);
       }
       mountPanel(currentFeature);
-      // Do NOT force setEqMode here; seed is already equilibrium
+      // No forced eq-mode set; seed already specifies it
     });
     startRouter();
   </script>
