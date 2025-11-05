@@ -174,15 +174,11 @@
 
     const store = createHistoryStore(reducer, seed);
 
-    // Batch helpers (for single-step undo per drag/rotate/price-drag)
-    const beginBatch = () => store.dispatch({ type: '__history_beginBatch' });
-    const endBatch   = () => store.dispatch({ type: '__history_endBatch' });
-
     const getTextSize = () => store.getState().textSize;
     const lineW = () => store.getState().textSize/5;
     const isDiseq = () => store.getState().eqMode === 'disequilibrium';
 
-    // Utility: shallow JSON snapshot equality (good enough for our small state)
+    // Utility: shallow JSON snapshot equality (sufficient for small state)
     const snap = (s) => JSON.stringify(s);
     const nearlyEqual = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 
@@ -468,7 +464,6 @@
 
     const marginToggle=document.getElementById('marginToggle');
     marginToggle.addEventListener('click', ()=>{
-      // reducer should toggle; no-op is unlikely, so just dispatch
       store.dispatch({ type:'toggleMargin' });
     });
 
@@ -476,7 +471,7 @@
     btnUndo.addEventListener('click', ()=>{ store.undo(); });
     btnRedo.addEventListener('click', ()=>{ store.redo(); });
     btnResetActions.addEventListener('click', ()=>{
-      store.reset(seed); // treat as new baseline; history.js should replace/clear appropriately
+      store.reset(seed); // hard reset baseline; history cleared by history.js
     });
 
     const toggleEquilibrium=document.getElementById('toggleEquilibrium');
@@ -529,7 +524,7 @@
       return Math.abs(y-yP) < 6;
     }
 
-    // Per-batch snapshot to discard empty drags
+    // Per-batch snapshot to discard empty drags (belt-and-braces with history.js)
     let batchActive = false;
     let preBatchSnap = null;
 
@@ -540,7 +535,7 @@
       if(isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y)){
         priceDrag.dragging=true;
         preBatchSnap = snap(store.getState());
-        beginBatch(); batchActive = true;
+        store.beginBatch(); batchActive = true;
         const y = clamp(m.y, getEffectiveBoundaries().yTop, getEffectiveBoundaries().yBottom);
         const curY = store.getState().priceY;
         if (!nearlyEqual((curY==null?NaN:curY), y)) {
@@ -553,7 +548,7 @@
       if(!id) return;
 
       preBatchSnap = snap(store.getState());
-      beginBatch(); batchActive = true;
+      store.beginBatch(); batchActive = true;
 
       if(mode==='shift'){
         dragging=true; lastMouseX=m.x; currentId=id;
@@ -579,7 +574,7 @@
     });
 
     canvas.addEventListener('mousemove',(e)=>{
-      const r=canvas.getBoundingClientRect(); const m={x:e.clientX-r.left, y:e.clientY-r.top};
+      const r=canvas.getBoundingClientRect(); const m={x=e.clientX-r.left, y=e.clientY-r.top};
       priceDrag.hover = isNearPriceHandle(m.x,m.y) || isNearPriceLine(m.x,m.y);
       canvas.style.cursor = (priceDrag.hover||priceDrag.dragging) ? 'ns-resize' : (dragging||rotating ? 'grabbing' : 'default');
 
@@ -616,11 +611,11 @@
       if(priceDrag.dragging){ priceDrag.dragging=false; }
 
       if (hadDrag && batchActive) {
-        endBatch();
+        store.endBatch();
         batchActive = false;
         const post = snap(store.getState());
         if (post === preBatchSnap) {
-          // Batch caused no net change; drop the redundant history entry
+          // If batch produced no net change, drop the entry
           store.undo();
         }
         preBatchSnap = null;
@@ -648,7 +643,7 @@
         store.reset(seed);
       }
       mountPanel(currentFeature);
-      // No forced eq-mode set; seed already specifies it
+      // Seed already sets initial eqMode; no forced toggle here
     });
     startRouter();
   </script>
